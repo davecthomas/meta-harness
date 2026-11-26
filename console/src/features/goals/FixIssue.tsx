@@ -172,7 +172,7 @@ export function FixIssue(props: { goalId: string; issue: FixableIssue; onAccepte
             {kept && (
               <Alert color="blue" variant="light" data-testid="fix-kept">
                 <Group justify="space-between" gap="xs">
-                  <Text size="sm">This draft was kept while the issue's task ran. Accept it to add it to the issue for the next run.</Text>
+                  <Text size="sm">Saved while the task ran. Accept it to add it to the issue before the next run.</Text>
                   <Button size="compact-xs" variant="default" loading={drafting} onClick={() => void draft(true)}>Draft again</Button>
                 </Group>
               </Alert>

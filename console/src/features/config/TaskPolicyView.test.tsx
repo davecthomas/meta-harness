@@ -70,9 +70,9 @@ test("the writing pass is a switch, on unless the policy turns it off", async ()
       <Staged />
     </MantineProvider>,
   );
-  expect(screen.getByText("Check what is posted for people to read")).toBeTruthy();
-  fireEvent.click(screen.getByRole("switch", { name: /Writing pass|Check what is posted/ }));
-  expect(await screen.findByText("Post what a run wrote as it is")).toBeTruthy();
+  expect(screen.getByText("Check text before Muxxy posts it")).toBeTruthy();
+  fireEvent.click(screen.getByRole("switch", { name: /Writing pass|Check text before Muxxy posts it/ }));
+  expect(await screen.findByText("Post text unchecked")).toBeTruthy();
   expect(screen.getByText(/Nothing is scanned or rewritten before it is posted/)).toBeTruthy();
 });
 

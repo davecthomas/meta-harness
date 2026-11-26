@@ -121,7 +121,7 @@ export function KillSwitchButton() {
     if (!error) return null;
     return (
       <>
-        <Tooltip label="The kill switch could not be read. Stop every running task and start none">
+        <Tooltip label="Could not read the kill switch. Stop every running task and start none">
           <Button size="xs" color="red" variant="light" leftSection={<IconPlayerStop size={14} />} onClick={() => setChange("stop")}>
             Stop everything
           </Button>

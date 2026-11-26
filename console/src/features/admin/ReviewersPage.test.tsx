@@ -51,5 +51,5 @@ test("a time with no review round says so", async () => {
       </MemoryRouter>
     </MantineProvider>,
   );
-  expect(await screen.findByText(/No review round in this time/)).toBeTruthy();
+  expect(await screen.findByText(/No review rounds in this period/)).toBeTruthy();
 });

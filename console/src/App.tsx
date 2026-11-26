@@ -252,12 +252,12 @@ export function App() {
             <Text size="sm" mb="sm">{refused}</Text>
             {notAllowed ? (
               <Group gap="sm">
-                <Text size="sm">Ask an admin to invite this Google account, or sign in with one that is invited.</Text>
+                <Text size="sm">Ask an admin to invite this Google account, or sign in with an invited one.</Text>
                 <Button size="compact-sm" variant="white" color="red" onClick={() => void signOut()}>Sign out and use another account</Button>
               </Group>
             ) : (
               <Group gap="sm">
-                <Text size="sm">This is the console's fault, not your account's. It may be restarting for a deploy.</Text>
+                <Text size="sm">Your account is fine. The console may be restarting for a deploy.</Text>
                 <Button size="compact-sm" variant="white" color="red" onClick={() => window.location.reload()}>Try again</Button>
               </Group>
             )}

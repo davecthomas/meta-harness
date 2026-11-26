@@ -126,7 +126,7 @@ export function ClassifierFields(props: {
           {routesWithoutClassifier(props.engine) ? (
             <NoModel
               model={props.model}
-              empty="none, as no classifier runs"
+              empty="none: no classifier runs"
               refused={`Engine ${props.engine.trim()} routes without a classifier, so it takes no model: leave it empty`}
               unused={`Engine ${props.engine.trim()} takes no model, so ${props.model} is not used`}
               changed={props.modelChanged}

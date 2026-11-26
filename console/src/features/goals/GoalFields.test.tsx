@@ -214,7 +214,7 @@ test("an assignee the tracker no longer lists is marked, and one it cannot list 
 
   // None named: no list is asked for.
   renderGoal(goal());
-  expect(await screen.findByText(/^None named: each issue goes to the goal's owner/)).toBeTruthy();
+  expect(await screen.findByText(/^None: issues go to the goal's owner/)).toBeTruthy();
 });
 
 test("a Jira goal's parent is named as the project's epics list it", async () => {
@@ -250,7 +250,7 @@ test("a parent that is no longer an open epic is marked, one that cannot be read
 test("a GitHub goal shows no parent setting", async () => {
   renderGoal(goal("active", { tracker: "github" }));
 
-  expect(await screen.findByText(/^None named: each issue goes to the goal's owner/)).toBeTruthy();
+  expect(await screen.findByText(/^None: issues go to the goal's owner/)).toBeTruthy();
   expect(screen.queryByText("Parent")).toBeNull();
   expect(screen.queryByTestId("goal-parent")).toBeNull();
   expect(trackerAsks.filter((url) => url.includes("/choices/parent"))).toEqual([]);

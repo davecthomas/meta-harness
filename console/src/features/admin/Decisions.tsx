@@ -64,7 +64,7 @@ export function Decisions() {
         data={[{ value: "all", label: "All" }, ...Object.entries(DECISIONS).map(([value, label]) => ({ value, label }))]}
       />
       <ErrorAlert error={error} />
-      {events && events.length === 0 && <Empty>No decision of this kind is recorded yet.</Empty>}
+      {events && events.length === 0 && <Empty>No decisions of this kind yet.</Empty>}
       {events && events.length > 0 && (
         <DataTable head={["When", "Task", "Decision"]}>
           {events.map((e) => (

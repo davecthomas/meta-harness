@@ -76,7 +76,7 @@ function RepoFile({ repos, onLoaded }: { repos: string[]; onLoaded: (spec: GoalS
     }
   }
 
-  if (!repos.length) return <Text size="sm" c="dimmed" data-testid="spec-needs-repo">Choose the goal's repository above first: the file is picked from it.</Text>;
+  if (!repos.length) return <Text size="sm" c="dimmed" data-testid="spec-needs-repo">Choose the goal's repository first.</Text>;
   const typedPath = (
     <TextInput
       label={listError ? "File in the repo" : "Or its path"}
@@ -227,7 +227,7 @@ export function SpecField({ value, onChange, repos = [], tracker, project, asksP
                       scheme={tracker}
                       name="parent"
                       label="Epic or issue"
-                      help="Its description is the specification, and the plan's tasks are created under it."
+                      help="Its description is the spec, and the plan's tasks go under it."
                       required={false}
                       value={issue}
                       onChange={pick}
@@ -237,7 +237,7 @@ export function SpecField({ value, onChange, repos = [], tracker, project, asksP
                     {parentAsked && parent && (
                       <Checkbox
                         label="Plan the goal from its description"
-                        description="Off: the goal's tasks are created under it, and planned from the goal's own description."
+                        description="Off: tasks go under it, planned from the goal's own description."
                         checked={fromIssue}
                         onChange={(e) => onChange(e.currentTarget.checked ? { ref: parent } : null)}
                       />

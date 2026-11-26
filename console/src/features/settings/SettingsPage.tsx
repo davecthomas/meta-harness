@@ -67,7 +67,7 @@ export function SettingsPage() {
         <Title order={4} mb="sm">New goal defaults</Title>
         <Facts
           items={[
-            ["Repositories", <InlineField kind="checkboxes" label="Repositories" value={planner.repos} data={repos} empty="No repository is registered yet: an admin adds one under Configuration, Repositories" showSaved onCommit={(v) => savePlanner({ repos: v })} />],
+            ["Repositories", <InlineField kind="checkboxes" label="Repositories" value={planner.repos} data={repos} empty="No repositories yet: an admin adds one under Configuration, Repositories" showSaved onCommit={(v) => savePlanner({ repos: v })} />],
             [
               "Budget",
               <InlineField kind="number" label="Budget" value={planner.max_usd === null ? null : Number(planner.max_usd)} min={0} decimalScale={2} prefix="$" allowEmpty empty="None" showSaved onCommit={(v) => savePlanner({ max_usd: v === null ? null : String(v) })} />,
@@ -109,7 +109,7 @@ export function SettingsPage() {
               <InlineField
                 kind="switch"
                 label="Notifications"
-                switchLabel="Browser notifications for what needs me"
+                switchLabel="Browser notifications when something needs me"
                 value={settings.notifications}
                 showSaved
                 onCommit={(on) => {

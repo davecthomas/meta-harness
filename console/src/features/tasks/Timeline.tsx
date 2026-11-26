@@ -195,7 +195,7 @@ export function Timeline({ events }: { events: MhEvent[] }) {
       }}
     >
       <Stack gap="sm">
-        {list.length === 0 && <Text size="sm" c="dimmed">Nothing has happened yet: the task has not started. Each event shows here as it happens.</Text>}
+        {list.length === 0 && <Text size="sm" c="dimmed">Nothing yet: the task hasn't started. Each event shows here as it happens.</Text>}
         {list.map((entry) =>
           entry.kind === "prompt" ? (
             <PromptRow key={entry.position} entry={entry} />

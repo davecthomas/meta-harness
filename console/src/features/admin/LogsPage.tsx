@@ -63,7 +63,7 @@ export function LogsPage() {
         <Switch label="Follow" checked={follow} onChange={(e) => setFollow(e.currentTarget.checked)} mb={8} />
       </Group>
       <ErrorAlert error={error} />
-      {entries && entries.length === 0 && <Empty>No log entry matches. The page starts on warnings and errors of the last hour: widen the time, lower the severity, or clear the search to see more.</Empty>}
+      {entries && entries.length === 0 && <Empty>No log entries match. The page starts with the last hour's warnings and errors: widen the time, lower the severity, or clear the search.</Empty>}
       {entries && entries.length > 0 && (
         <DataTable head={["Time", "Service", "Severity", "Message"]}>
           {entries.map((e, i) => (

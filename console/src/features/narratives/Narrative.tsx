@@ -136,14 +136,14 @@ export function Narrative({ title, path, watch }: {
       {opened && (
         <Stack gap="xs" mt="sm">
           {personas && personas.length === 0 && (
-            <Text size="sm">No reader is set up. An admin adds them under Configuration, Planning (narratives.personas).</Text>
+            <Text size="sm">No readers yet. An admin adds them under Configuration, Planning (narratives.personas).</Text>
           )}
           {loading && <Group gap="xs"><Loader size="xs" /><Text size="sm" c="dimmed">Reading the narrative.</Text></Group>}
           {!loading && read?.writing && (
             <Group gap="xs" data-testid="narrative-writing" role="status">
               <Loader size="xs" />
               <Text size="sm" c="dimmed">
-                {read.text ? "The goal has changed, so a new one is being written. This is the one before it." : "Writing it now. That takes up to a minute, and it appears here when it is done."}
+                {read.text ? "The goal has changed, and a new narrative is on its way. This is the previous one." : "Writing it now. It appears here within a minute."}
               </Text>
             </Group>
           )}

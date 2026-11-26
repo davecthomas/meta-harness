@@ -237,7 +237,7 @@ function TierCard({ staging: s, tier, index, count, profiles, models, onRemoved 
         kind="textarea"
         label={`Description of ${tier.name}`}
         value={tier.description ?? ""}
-        empty="No description: the classifier reads it to place a task in this tier"
+        empty="No description yet. The classifier uses it to send tasks to this tier."
         display={tier.description ? <Text size="sm" c="dimmed" style={{ whiteSpace: "pre-wrap" }}>{tier.description}</Text> : undefined}
         changed={changed(s, [...path, "description"])}
         readOnly={s.readOnly}

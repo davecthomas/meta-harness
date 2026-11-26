@@ -163,7 +163,7 @@ export function WorkReport() {
           {report && <Text size="xs" c="dimmed" data-testid="work-report-written">Written {when(report.written_at)}</Text>}
         </Group>
         {failed && <Text size="sm" c="red" role="alert">Could not refresh the report: {failed}.{report ? " The last report stays." : ""}</Text>}
-        {found && !report && !failed && <Text size="sm" c="dimmed">No report has been written yet.</Text>}
+        {found && !report && !failed && <Text size="sm" c="dimmed">No report yet.</Text>}
         {!found && !failed && <Text size="sm" c="dimmed">Loading…</Text>}
         {report && found?.stale && (
           // The goals have moved since this was written: its words are held back, and what needs the operator

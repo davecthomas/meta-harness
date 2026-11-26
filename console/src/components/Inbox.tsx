@@ -85,7 +85,7 @@ export function Inbox() {
           )}
           {reviews.length > 0 && (
             <>
-              <Divider label="Also happening, nothing to do" labelPosition="left" />
+              <Divider label="Running, nothing needed from you" labelPosition="left" />
               {reviews.map((r) => (
                 <Anchor key={r.key} component={Link} to={r.to} size="sm" c="dimmed" data-testid={`inbox-${r.key}`}>{r.text}</Anchor>
               ))}

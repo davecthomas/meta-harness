@@ -59,7 +59,7 @@ export function originText(origin: RunOrigin): string {
 
 export function RunProvenance({ events }: { events: MhEvent[] }) {
   const origins = provenanceOf(events);
-  if (!origins.length) return <Text size="sm" c="dimmed">None recorded yet. A run's provenance is recorded as it starts.</Text>;
+  if (!origins.length) return <Text size="sm" c="dimmed">None yet. It's recorded when a run starts.</Text>;
   const parent = origins.find((o) => o.parentTaskId)?.parentTaskId;
   return (
     <Stack gap={4} data-testid="run-provenance">

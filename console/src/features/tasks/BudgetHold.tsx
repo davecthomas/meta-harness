@@ -177,7 +177,7 @@ export function BudgetHold({ task, onAnswered }: { task: Task; onAnswered: (task
           </Group>
         )}
         {error && <Text size="sm" c="red">{error}</Text>}
-        <Text size="sm" c="dimmed">With no answer, it waits up to a day, keeping its place among the running tasks, then ends.</Text>
+        <Text size="sm" c="dimmed">With no answer it waits up to a day, holding its place among running tasks, then ends.</Text>
       </Stack>
     </Alert>
   );

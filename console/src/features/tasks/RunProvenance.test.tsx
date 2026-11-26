@@ -55,5 +55,5 @@ test("the task page lists each run and links the task that made this one", () =>
 
 test("a task with no recorded provenance says so", () => {
   render(<MantineProvider theme={theme}><MemoryRouter><RunProvenance events={[]} /></MemoryRouter></MantineProvider>);
-  expect(screen.getByText(/None recorded yet/)).toBeTruthy();
+  expect(screen.getByText(/None yet/)).toBeTruthy();
 });

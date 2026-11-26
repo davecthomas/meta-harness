@@ -38,7 +38,7 @@ export function RepoPick({
     return (
       <Stack gap={6} data-testid="no-repos">
         <Text size="sm" fw={500}>{label ?? "Repositories"}</Text>
-        <Text size="sm" c="orange">No repository is offered yet. Connect GitHub to work in any repo you can push to.</Text>
+        <Text size="sm" c="orange">No repositories yet. Connect GitHub to work in any repo you can push to.</Text>
         <ConnectButton />
         <Text size="xs" c="dimmed">
           An admin can also list one under <Anchor component={Link} to="/config?kind=repos" size="xs">Configuration, Repositories</Anchor>.

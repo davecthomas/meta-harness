@@ -73,7 +73,7 @@ export function LabelEdit({ goal, readOnly, save }: FieldProps) {
   const shown = goal.label ? (
     <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge>
   ) : (
-    <Text size="sm" c="dimmed">None: the goal takes the issues picked for it</Text>
+    <Text size="sm" c="dimmed">None: the goal runs only the issues picked for it</Text>
   );
   return (
     <InlineEdit<string>
@@ -96,7 +96,7 @@ export function LabelEdit({ goal, readOnly, save }: FieldProps) {
             description: undefined,
             "aria-label": "Label",
             error: invalid,
-            placeholder: picked ? "None: the goal takes the issues picked for it" : "meta-harness:bootstrap",
+            placeholder: picked ? "None: the goal runs only the issues picked for it" : "meta-harness:bootstrap",
             comboboxProps: { withinPortal: false },
           }}
         />
@@ -152,7 +152,7 @@ export function BudgetEdit({ goal, readOnly, save }: FieldProps) {
       input={({ value, onChange, invalid }) => (
         <NumberInput
           aria-label="Budget"
-          description="What its runs may spend; the fields below say what happens when they have. Leave it empty for none."
+          description="The most its runs may spend. Leave empty for no limit."
           placeholder="None"
           prefix="$"
           min={0}
@@ -229,7 +229,7 @@ export function AutonomyEdit({ goal, readOnly, save }: FieldProps) {
     <Stack gap={4}>
       <AutonomyPicker
         size="xs"
-        label="How much is done without asking"
+        label="What it does without asking"
         disabled={busy}
         value={now}
         onChange={(value) => {
@@ -269,7 +269,7 @@ export function AssigneeField({ goal }: { goal: FieldProps["goal"] }) {
     };
   }, [scheme, named, project, repos]);
   if (!named) {
-    return <Text size="sm">None named: each issue goes to the goal's owner, when the tracker knows their email.</Text>;
+    return <Text size="sm">None: issues go to the goal's owner if the tracker knows their email.</Text>;
   }
   const found = people?.find((p) => p.value === named);
   return (
@@ -281,7 +281,7 @@ export function AssigneeField({ goal }: { goal: FieldProps["goal"] }) {
           {named} is not one of the people the tracker can assign now, so the goal's issues stay unassigned. Add them to the tracker, or start a new goal that names another assignee.
         </Text>
       )}
-      <Text size="sm" c="dimmed">Fixed when the goal was created.</Text>
+      <Text size="sm" c="dimmed">Set at creation; it can't change.</Text>
     </Stack>
   );
 }
@@ -321,7 +321,7 @@ export function ParentField({ goal }: { goal: FieldProps["goal"] }) {
           {named} is not one of the project's open epics now, so Jira may refuse it. Each issue it refuses is created without a parent, and the goal says which. Reopen the epic, or set each issue's parent in Jira.
         </Text>
       )}
-      <Text size="sm" c="dimmed">The issues its plan creates go under it. Fixed when the goal was created.</Text>
+      <Text size="sm" c="dimmed">The issues its plan creates go under it. Set at creation; it can't change.</Text>
     </Stack>
   );
 }
