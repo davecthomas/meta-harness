@@ -100,13 +100,33 @@ def reached_of(identity: str) -> list[dict[str, Any]]:
     return list(row["reached"]) if row and row["state"] == "connected" else []
 
 
-def save_reached(identity: str, owners: list[dict[str, Any]]) -> None:
-    """Keep the accounts a read of the operator's repos found."""
+def save_reached(identity: str, owners: list[dict[str, Any]], repos: list[dict[str, Any]] | None = None) -> None:
+    """Keep what a read of the operator's repos found: the accounts, and the repos themselves, so a restart of
+    the planner answers from them at once."""
     with db.connect(autocommit=True) as conn:
+        if repos is None:
+            conn.execute(
+                "UPDATE planner.github_connection SET reached = %s, checked_at = now() WHERE identity = %s",
+                (Jsonb(owners), identity),
+            )
+            return
         conn.execute(
-            "UPDATE planner.github_connection SET reached = %s, checked_at = now() WHERE identity = %s",
-            (Jsonb(owners), identity),
+            "UPDATE planner.github_connection SET reached = %s, reached_repos = %s, reached_at = now(), "
+            "checked_at = now() WHERE identity = %s",
+            (Jsonb(owners), Jsonb(repos), identity),
         )
+
+
+def reached_repos_of(identity: str) -> tuple[float, list[dict[str, Any]]] | None:
+    """The repos the operator's last read found, with when (seconds since the epoch); None before a first read,
+    or for a connection that does not work."""
+    with db.connect(autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT reached_repos, reached_at FROM planner.github_connection "
+            "WHERE identity = %s AND state = 'connected' AND reached_at IS NOT NULL",
+            (identity,),
+        ).fetchone()
+    return (row[1].timestamp(), list(row[0])) if row else None
 
 
 def owners_of(identity: str) -> list[str]:

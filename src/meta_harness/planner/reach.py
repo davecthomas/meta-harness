@@ -101,7 +101,7 @@ async def reachable(
         raise
     _held[identity] = (time.time(), repos)
     answer = _answer(identity, _held[identity], False, None)
-    await asyncio.to_thread(github_api.save_reached, identity, answer["owners"])
+    await asyncio.to_thread(github_api.save_reached, identity, answer["owners"], repos)
     return answer
 
 
@@ -147,14 +147,19 @@ OFFER_STALE_SECONDS = 24 * 3600.0
 
 
 async def offered(identity: str, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
-    """The operator's reachable repos for a picker, at once when a list is held: one past its time is answered
-    from as it is and read again behind the answer, so a form does not wait on GitHub each time. With none
-    held, or one older than a day, the read is waited for.
+    """The operator's reachable repos for a picker, at once when a list is held, in memory or kept from the last
+    read: one past its time is answered from as it is and read again behind the answer, so a form does not wait
+    on GitHub each time, nor after a restart. With none, or one older than a day, the read is waited for.
 
     Raises:
         github_user.GitHubUserError: As reachable does.
     """
     held = _held.get(identity)
+    if held is None:
+        # After a restart, from the list the last read kept: the picker does not wait on GitHub after a deploy.
+        held = await asyncio.to_thread(github_api.reached_repos_of, identity)
+        if held is not None:
+            _held[identity] = held
     age = time.time() - held[0] if held else None
     if held is None or age is None or age >= OFFER_STALE_SECONDS:
         return await reachable(identity, False, transport)
