@@ -69,7 +69,7 @@ export function ReviewDialog(props: {
             </Code>
           </ScrollArea.Autosize>
         )}
-        <TextInput label="Note" description="Why you changed it. It shows in the version history." value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+        <TextInput label="Note" description="Shown in the version history." value={note} onChange={(e) => setNote(e.currentTarget.value)} />
         <Group justify="flex-end">
           <Button variant="default" onClick={props.onClose}>Back to editing</Button>
           <Button

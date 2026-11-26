@@ -98,7 +98,7 @@ export function ImproveGoal({
       {done && done.questions.length > 0 && (
         <Stack gap={4} data-testid="improve-questions">
           <SubTitle>Open questions</SubTitle>
-          <Text size="xs" c="dimmed">Only you can answer these. Write the answers into the description.</Text>
+          <Text size="xs" c="dimmed">Answer these in the description.</Text>
           <List size="sm" spacing={2}>
             {done.questions.map((q, i) => <List.Item key={i}>{q}</List.Item>)}
           </List>

@@ -70,7 +70,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               />
             </Group>
             <Text size="sm" c="dimmed">
-              The agent that plans each goal. Its profile needs the create_issue tool.
+              Its profile needs the create_issue tool.
             </Text>
           </Stack>,
         ],
@@ -109,7 +109,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               onCommit={(on) => s.stage(["track_new_tasks"], on)}
             />
             <Text size="sm" c="dimmed">
-              The starting choice at approval. You can change it for any plan.
+              You can change it for any plan.
             </Text>
           </Stack>,
         ],
@@ -200,7 +200,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(on) => s.stage(["suggest_fixes"], on)}
             />
-            <Text size="sm" c="dimmed">When a plan has a problem the planner can fix itself, it drafts the fix for you to accept. Each fix is one more planning run.</Text>
+            <Text size="sm" c="dimmed">Each fix is one more planning run.</Text>
           </Stack>,
         ],
         [
@@ -237,7 +237,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["max_unasked_usd"], v === null ? undefined : Number(v).toFixed(2))}
             />
-            <Text size="sm" c="dimmed">For everything planning does on a goal before you next ask it for something. That is carrying on a plan that stopped at a limit, resizing tasks and fixing gaps. Each planning run you ask for starts it again.</Text>
+            <Text size="sm" c="dimmed">Covers carrying on a stopped plan, resizing tasks and fixing gaps. Each planning run you ask for starts it again.</Text>
           </Stack>,
         ],
         [
@@ -269,7 +269,6 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => s.stage(["issue_chars"], v ?? undefined)}
               />
             </Group>
-            <Text size="sm" c="dimmed">The plan says when a goal has more issues than this.</Text>
           </Stack>,
         ],
       ]}

@@ -528,18 +528,13 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
           {issues.length > 0 && (
             <div>
               <SubTitle>The goal's issues</SubTitle>
-              <Text size="sm" c="dimmed" mb={6}>Change any decision before you approve.</Text>
               <IssueDecisions issues={issues} items={items} drafts={base} onChange={drafting ? undefined : setEditedItems} />
             </div>
           )}
           {(drafts.length > 0 || issues.length > 0) && (
             <div>
               <SubTitle>New tasks</SubTitle>
-              <Text size="sm" c="dimmed">
-                {drafts.length
-                  ? "Written by the planner. Created when you approve."
-                  : "None: the goal's issues cover it."}
-              </Text>
+              {drafts.length === 0 && <Text size="sm" c="dimmed">None: the goal's issues cover it.</Text>}
             </div>
           )}
           {embedded ? (

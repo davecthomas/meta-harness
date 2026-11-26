@@ -505,7 +505,7 @@ export function NewGoal() {
           {reached >= 2 && source && (
             <Panel n={2} question="Where is the work?" answer={whereAnswer} open={open(2)} done={done(2)} onEdit={() => go(2)}>
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
-                <RepoPick offered={reposRead ? repos : null} value={chosen} onChange={setChosen} label="Repositories" description="The repositories the goal may change." required />
+                <RepoPick offered={reposRead ? repos : null} value={chosen} onChange={setChosen} label="Repositories" required />
                 <Stack gap="xs">
                   <GoalTrackerFields
                     trackers={source === "issues" ? realTrackers : trackers}
@@ -536,7 +536,6 @@ export function NewGoal() {
             <Panel n={3} question={source === "issues" ? "Which issues?" : source === "spec" ? "Which spec?" : "What should it do?"} answer={madeAnswer} open={open(3)} done={done(3)} onEdit={() => go(3)}>
               {source === "issues" && (
                 <Stack gap="md" data-testid="existing-issues">
-                  <Text size="sm" c="dimmed">Give the goal a label, pick issues by hand, or both.</Text>
                   <LabelField value={label} onChange={setLabel} repos={chosen} source={readable ? issueSource : null} required={false} />
                   <LabelIssues label={label} issues={labeled} />
                   <Group gap="sm">
@@ -626,7 +625,7 @@ export function NewGoal() {
               {planned && (
                 <Switch
                   label="Adversarial plan review"
-                  description="A second AI model tries to find what is wrong with the plan before you approve it. Adds a few minutes and one or two planning runs."
+                  description="A second model looks for problems before you approve. Adds a few minutes and one or two planning runs."
                   checked={reviews}
                   onChange={(event) => setReviewed(event.currentTarget.checked)}
                   data-testid="new-goal-plan-review"
@@ -634,7 +633,7 @@ export function NewGoal() {
               )}
               <NumberInput
                 label="Budget"
-                description="What the goal's runs may spend. Left empty, the most one goal may spend."
+                description="Left empty, the most one goal may spend."
                 prefix="$"
                 min={0}
                 decimalScale={2}

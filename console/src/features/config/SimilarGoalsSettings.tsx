@@ -92,7 +92,7 @@ export function SimilarGoalsSettings({ staging: s }: { staging: Staging }) {
       {gone && <Text size="sm" c="orange">{model} is no longer in the list of embedding models. Pick another.</Text>}
       {failed && <Text size="sm" c="dimmed">The embedding models could not be listed ({failed}). Reload the page to try again; the saved model stays.</Text>}
       <Text size="sm" c="dimmed">
-        One short embedding call as a description is written. Start low and raise it once the answers on the Performance page show where duplicates begin.
+        Start low and raise it once the answers on the Performance page show where duplicates begin.
       </Text>
     </Stack>
   );

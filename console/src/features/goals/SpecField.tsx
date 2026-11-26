@@ -105,7 +105,7 @@ function RepoFile({ repos, onLoaded }: { repos: string[]; onLoaded: (spec: GoalS
       ) : (
         <Select
           label="File in the repo"
-          description="A Markdown or text file on the default branch: a PRD, a design document."
+
           searchable
           disabled={files === null || !!reading}
           placeholder={files === null ? "Reading the repo's files…" : files.length === 0 ? "This repo has no Markdown or text file" : "Choose a file, or type to search"}
@@ -198,9 +198,6 @@ export function SpecField({ value, onChange, repos = [], tracker, project, asksP
             {shown ? <IconChevronDown size={18} style={{ flexShrink: 0, marginTop: 4 }} /> : <IconChevronRight size={18} style={{ flexShrink: 0, marginTop: 4 }} />}
             <div>
               <Title order={4}>Plan a goal from a spec or an epic</Title>
-              <Text size="sm" c="dimmed">
-                For work with no issues yet: the planner breaks a document into right-sized tasks under one epic.
-              </Text>
             </div>
           </Group>
         </UnstyledButton>
@@ -250,7 +247,7 @@ export function SpecField({ value, onChange, repos = [], tracker, project, asksP
                 {source === "upload" && (
                   <FileInput
                     label="Specification file"
-                    description="Markdown or plain text, from this machine."
+
                     placeholder="Choose a .md or .txt file"
                     accept=".md,.markdown,.txt,text/markdown,text/plain"
                     clearable

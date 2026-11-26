@@ -44,7 +44,7 @@ export function Overview() {
 
   return (
     <>
-      <PageHeader title="Overview" description="What needs you, what is running, and what waits to start." />
+      <PageHeader title="Overview" />
 
       <WorkReport />
       <Narrative title="Narrative of the running goals" path="/v1/overview/narrative" />

@@ -121,7 +121,6 @@ export function Narrative({ title, path, watch }: {
           <Group gap={6} wrap="nowrap">
             {opened ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
             <Title order={5}>{title}</Title>
-            {!opened && <Text size="sm" c="dimmed">A summary to pass on, written for its reader.</Text>}
           </Group>
         </UnstyledButton>
         {opened && personas && personas.length > 1 && (

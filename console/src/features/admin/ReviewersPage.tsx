@@ -35,7 +35,7 @@ export function ReviewersPage() {
     <>
       <PageHeader
         title="Reviewers"
-        description="How each reviewer's findings turned out. The next round's reviewer judges each one fixed or not, an operator may dismiss one, and a finding no round followed is never judged."
+        description="The next round's reviewer judges each finding fixed or not. A finding no round followed is never judged."
       />
       <SegmentedControl mb="md" size="xs" value={days} onChange={setDays} data={RANGES} />
       <ErrorAlert error={error} />

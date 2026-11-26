@@ -251,7 +251,8 @@ test("the plan shows the order across issues and new tasks, then each decision; 
   expect((within(big).getByRole("radio", { name: "Split" }) as HTMLInputElement).checked).toBe(true);
   expect((within(big).getByRole("textbox", { name: "Why, for VL-2" }) as HTMLInputElement).value).toBe("Two changes.");
   expect((within(screen.getByTestId("plan-issue-jira:VL-3")).getByRole("radio", { name: "Leave out" }) as HTMLInputElement).checked).toBe(true);
-  expect(screen.getByText("Written by the planner. Created when you approve.")).toBeTruthy();
+  // The heading says what they are: no line under it explains them.
+  expect(screen.queryByText("Written by the planner. Created when you approve.")).toBeNull();
 });
 
 test("an operator changes a decision, which is saved with the plan as its next version", async () => {

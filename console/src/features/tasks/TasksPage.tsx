@@ -128,7 +128,7 @@ export function TasksPage() {
 
   return (
     <>
-      <PageHeader title="Tasks" description="Every task from every goal. Tiles stream the runs on screen live." />
+      <PageHeader title="Tasks" />
       <Group mb="md" justify="space-between" wrap="wrap" gap="sm">
         <SegmentedControl value={filter[0]} onChange={(show) => set({ show })} data={FILTERS.map(([value, label]) => ({ value, label }))} />
         <Group gap="sm">

@@ -54,7 +54,7 @@ export function LogsPage() {
 
   return (
     <>
-      <PageHeader title="Logs" description="The VM's services and the edge, from Cloud Logging, newest first. At most 500 entries." />
+      <PageHeader title="Logs" description="Newest first, 500 entries at most." />
       <Group mb="md" align="flex-end" wrap="wrap">
         <Select label="Service" placeholder="Every service" clearable value={unit} onChange={setUnit} data={units} w={180} />
         <Select label="At least" placeholder="Any severity" clearable value={severity} onChange={setSeverity} data={SEVERITIES} w={150} />

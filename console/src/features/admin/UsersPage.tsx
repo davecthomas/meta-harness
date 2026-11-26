@@ -69,7 +69,7 @@ export function UsersPage() {
 
   return (
     <>
-      <PageHeader title="Users" description="Who may sign in to the console. An admin changes configuration, uses the kill switch and opens the admin pages; a regular user does not." />
+      <PageHeader title="Users" description="An admin changes configuration, uses the kill switch and opens the admin pages." />
       <ErrorAlert error={error} />
       <Paper p="md" mb="lg" withBorder maw={720}>
         <form
@@ -79,7 +79,7 @@ export function UsersPage() {
           }}
         >
           <Group gap="sm" align="flex-end">
-            <TextInput label="Invite a user" placeholder="name@example.com" description="The Google account they sign in with." value={email} onChange={(e) => setEmail(e.currentTarget.value)} style={{ flex: 1 }} />
+            <TextInput label="Invite a user" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.currentTarget.value)} style={{ flex: 1 }} />
             <NativeSelect label="Role" data={ROLES} value={role} onChange={(e) => setRole(e.currentTarget.value)} />
             <Button type="submit" loading={busy} disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())} leftSection={<IconUserPlus size={16} />}>Invite</Button>
           </Group>
