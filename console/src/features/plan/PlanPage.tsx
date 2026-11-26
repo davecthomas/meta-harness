@@ -46,27 +46,41 @@ const dollars = (amount: string | null | undefined): string => {
 // The one thing the plan asks now, in a sentence or two, beside the buttons that answer it: the first is the
 // recommended one. The service decides what it says and offers; this draws it. It stays in view as the page
 // scrolls, so the decision is never more than a glance away.
-export function DecisionBar({ decision, onAct, busy }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean }) {
+export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[] }) {
   const working = decision.state === "drafting" || decision.state === "improving";
+  const buttons = (
+    <Group gap="xs">
+      {decision.buttons.map((button, i) => (
+        <Button key={button.action + button.label} color={i === 0 ? "teal" : undefined} variant={i === 0 ? "filled" : "default"} disabled={busy} onClick={() => onAct(button.action)}>
+          {button.label}
+        </Button>
+      ))}
+    </Group>
+  );
+  const says = (
+    <Group gap="sm" wrap="nowrap" style={{ flex: "1 1 320px" }}>
+      {working && <Loader size="sm" />}
+      <Stack gap={2}>
+        <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
+        {/* While the planner or its reviewer works, nothing is asked: the page follows it as it goes. */}
+        {working && <Text size="sm" c="dimmed">Nothing needs you until this is done.</Text>}
+      </Stack>
+    </Group>
+  );
+  // What to weigh before deciding is part of the decision: it is in this one box, over the buttons, so it is
+  // read before they are reached. With nothing to weigh, the sentence and the buttons share a line.
+  const weigh = decision.buttons.length > 0 ? gaps : [];
   return (
     <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={{ position: "sticky", top: "var(--app-shell-header-height, 72px)", zIndex: 5 }}>
-      <Group justify="space-between" wrap="wrap" gap="md">
-        <Group gap="sm" wrap="nowrap" style={{ flex: "1 1 320px" }}>
-          {working && <Loader size="sm" />}
-          <Stack gap={2}>
-            <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
-            {/* While the planner or its reviewer works, nothing is asked: the page follows it as it goes. */}
-            {working && <Text size="sm" c="dimmed">Nothing needs you until this is done.</Text>}
-          </Stack>
-        </Group>
-        <Group gap="xs">
-          {decision.buttons.map((button, i) => (
-            <Button key={button.action + button.label} color={i === 0 ? "teal" : undefined} variant={i === 0 ? "filled" : "default"} disabled={busy} onClick={() => onAct(button.action)}>
-              {button.label}
-            </Button>
-          ))}
-        </Group>
-      </Group>
+      {weigh.length === 0 ? (
+        <Group justify="space-between" wrap="wrap" gap="md">{says}{buttons}</Group>
+      ) : (
+        <Stack gap="sm">
+          {says}
+          <OpenQuestions gaps={weigh} />
+          <Group justify="flex-end">{buttons}</Group>
+        </Stack>
+      )}
     </Paper>
   );
 }
@@ -103,6 +117,23 @@ export function Glance({ glance }: { glance: PlanGlance }) {
 }
 
 const KINDS: [string, string][] = [["added", "added"], ["removed", "removed"], ["reordered", "reordered"], ["changed", "changed"], ["reworded", "reworded"]];
+
+// Whether the plan's changes since the version it is compared with are the review's own fixes: the review then
+// says what they changed, and no part of the page repeats it.
+export function reviewMadeTheChanges(plan: Plan): boolean {
+  return !!plan.review && plan.review.counts.fixed > 0 && !plan.suggestion && !plan.applied_fix && !!plan.changes;
+}
+
+// What the review's fixes changed about the plan, as a sentence for the end of the review's own: " Fixing them
+// reworded 1 task." Empty when the changes are not the review's.
+export function changedByReview(plan: Plan): string {
+  if (!reviewMadeTheChanges(plan)) return "";
+  const diff = plan.changes?.diff ?? {};
+  const parts = KINDS.filter(([kind]) => (diff[kind] ?? []).length > 0).map(([kind, word]) => `${word} ${diff[kind].length}`);
+  if (!parts.length) return "";
+  const tasks = KINDS.reduce((n, [kind]) => n + (diff[kind] ?? []).length, 0);
+  return ` The fix${(plan.review?.counts.fixed ?? 0) === 1 ? "" : "es"} ${parts.join(", ")} task${tasks === 1 ? "" : "s"}.`;
+}
 
 // What changed about the plan and why: the reasons first, then a count for each kind of change. A count opens
 // to its tasks. Never a line for each task, which is what nobody reads.
@@ -194,7 +225,7 @@ function FindingCard({ finding, busy, onDismiss }: { finding: PlanFinding; busy:
             {finding.tasks.map((task) => <Badge key={task} variant="outline" tt="none" radius="sm">{task}</Badge>)}
           </Group>
           <Text size="sm">{finding.says}</Text>
-          {finding.change && <Text size="sm" c="dimmed">To settle it: {finding.change}</Text>}
+          {finding.change && <Text size="sm">To settle it: {finding.change}</Text>}
         </Stack>
         <Button size="xs" variant="default" disabled={busy} onClick={onDismiss}>Not a problem</Button>
       </Group>
@@ -238,7 +269,7 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
         ? `The review by ${review.model} did not finish, so it says nothing about the plan.`
         : review.counts.found === 0
           ? `${review.model} looked for problems and found none.`
-          : `${review.model} found ${review.counts.found} problem${review.counts.found === 1 ? "" : "s"}: ${review.counts.fixed} fixed, ${review.counts.open} open${review.state === "partial" ? ". It stopped before it finished" : ""}.`;
+          : `${review.model} found ${review.counts.found} problem${review.counts.found === 1 ? "" : "s"}: ${review.counts.fixed} fixed, ${review.counts.open} open${review.state === "partial" ? ". It stopped before it finished" : ""}.${changedByReview(plan)}`;
   const lists: [string, string, PlanFinding[]][] = [["fixed", `${fixed.length} fixed`, fixed], ["advice", `${advice.length} suggestion${advice.length === 1 ? "" : "s"}`, advice]];
   return (
     <div data-testid="plan-review">
@@ -294,7 +325,8 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
         <Collapse expanded={open === "fixed" || open === "advice"}>
           <List size="sm" spacing={4} data-testid="plan-review-list">
             {(open === "fixed" ? fixed : open === "advice" ? advice : []).map((f) => (
-              <List.Item key={f.id}>{f.says}{f.change ? <Text span c="dimmed"> {f.change}</Text> : null}</List.Item>
+              // One size and one color: what was wrong, then what settles it, read as one sentence after another.
+              <List.Item key={f.id}>{f.says}{f.change ? ` ${f.change}` : ""}</List.Item>
             ))}
           </List>
         </Collapse>
@@ -308,10 +340,10 @@ export function OpenQuestions({ gaps }: { gaps: string[] }) {
   const [all, setAll] = useState(false);
   if (!gaps.length) return null;
   const shown = all ? gaps : gaps.slice(0, SHOWN_BEFORE_COUNTING);
-  // What the planner says could change the decision, as a short list under one line. Not every one is a
-  // question, so it is not called that, and each is a line, not a card: it is read in passing, before approving.
+  // What the planner says could change the decision, as a short list under one line, inside the decision's own
+  // box and over its buttons (DecisionBar). Not every one is a question, so it is not called that.
   return (
-    <Alert color="yellow" variant="light" p="sm" title="Worth weighing before you approve" data-testid="plan-questions">
+    <Alert color="yellow" variant="light" p="sm" title="Weigh this first" data-testid="plan-questions">
       <List size="sm" spacing={4}>
         {shown.map((gap, i) => <List.Item key={i}>{gap}</List.Item>)}
       </List>
@@ -416,9 +448,7 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
   return (
     <Stack gap="xs" data-testid="plan-body">
       <ErrorAlert error={error} />
-      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} />}
-      {/* Right under the decision: it is what could change it. */}
-      {planning && plan?.plan && <OpenQuestions gaps={plan.plan.gaps ?? []} />}
+      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} />}
       {plan?.glance && <Glance glance={plan.glance} />}
       {/* A review that still asks something (it is running, or left a problem open) comes before the tasks.
           One that is done and settled comes after them: the tasks are what the operator reads to decide. */}
@@ -437,7 +467,8 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
         <ApprovedPlan goal={goal} />
       )}
       {!reviewFirst && review}
-      {plan && <WhatChanged plan={plan} />}
+      {/* When the changes are the review's own fixes, the review has said them. */}
+      {plan && !reviewMadeTheChanges(plan) && <WhatChanged plan={plan} />}
     </Stack>
   );
 }
