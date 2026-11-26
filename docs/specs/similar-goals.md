@@ -144,3 +144,22 @@ model calls.
 - A row offers Open it and Not a duplicate.
 - One question at save, for a clean answer.
 - Widening the similar goal waits for the recorded answers.
+
+## As built (2026-11-26)
+
+| Part | State |
+|---|---|
+| The comparison, `POST /v1/goals/similar` | Built (`planner/similar_goals.py`, `planner/embeddings.py`) |
+| The panel and the question at save | Built (`console/src/features/goals/SimilarGoals.tsx`) |
+| The record of each answer | Built: `goal_similarity_judged`, and `GET /v1/goals/similar/shown` |
+| The Performance table | Not built |
+| The settings in Configuration, Planning | Changed through Advanced: JSON. The form has no group for them yet |
+
+Where it differs from the text above:
+
+- Muxxy makes a goal's embedding the first time it compares the goal, and again when the goal's description or
+  the model has changed. Creating or editing a goal makes no call of its own.
+- The check runs two seconds after typing stops. Leaving the field does not start one sooner.
+- The gateway's embeddings answer has no cost in it, so Muxxy records no cost for these calls.
+- "Yes, same work" is recorded when the operator says it. Its event has no new goal id, even when the operator
+  then creates the goal anyway.
