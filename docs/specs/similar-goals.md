@@ -161,5 +161,5 @@ Where it differs from the text above:
   the model has changed. Creating or editing a goal makes no call of its own.
 - The check runs two seconds after typing stops. Leaving the field does not start one sooner.
 - The gateway's embeddings answer has no cost in it, so Muxxy records no cost for these calls.
-- "Yes, same work" is recorded when the operator says it. Its event has no new goal id, even when the operator
+- Muxxy records "Yes, same work" when the operator says it. Its event has no new goal id, even when the operator
   then creates the goal anyway.
