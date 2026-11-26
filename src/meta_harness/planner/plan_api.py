@@ -11,6 +11,7 @@ Registered by the planner service's create_app, which hands over what the routes
 
 import asyncio
 import logging
+from decimal import Decimal
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -93,6 +94,14 @@ def _planning_usd() -> str | None:
         return None
 
 
+def _review_usd() -> str | None:
+    """The spend limit of one plan review, with two decimals, for the button that starts one to name."""
+    try:
+        return f"{Decimal(str(plan_review.review_limit(planning.settings()))):.2f}"
+    except Exception:  # noqa: BLE001 - the button is still offered, without the figure
+        return None
+
+
 def register(
     app: FastAPI,
     operator: Callable[..., str],
@@ -140,6 +149,8 @@ def register(
             # The plan's adversarial review: who reviewed, its rounds, and every finding with its status; None
             # when the plan has none.
             "review": review,
+            # What a review started by the Review button may spend: the limit the review runs under.
+            "review_usd": _review_usd(),
             # The plan's state and the one thing it asks now, with its buttons (actions.plan_decision): the Plan
             # page draws this and decides nothing itself.
             "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd(), review),

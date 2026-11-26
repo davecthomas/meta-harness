@@ -96,6 +96,12 @@ def pick(planner_candidate: str, candidates: list[str]) -> str | None:
     return next((c for c in candidates if engine_of(c) and engine_of(c) != family), None)
 
 
+def review_limit(config: dict[str, Any]) -> Any:
+    """The spend limit of one plan review: the planning configuration's `adversarial_review.max_usd`, else its
+    `max_usd`."""
+    return (config.get("adversarial_review") or {}).get("max_usd") or config["max_usd"]
+
+
 def max_rounds() -> int:
     try:
         found = int((planning.settings().get("adversarial_review") or {}).get("max_rounds", DEFAULT_ROUNDS))
@@ -333,7 +339,7 @@ async def maybe_start(
         )
     round_no = len(found) + 1
     earlier = [f for r in found for f in r["findings"] if f["status"] in (OPEN, REVISED)]
-    limit = (config.get("adversarial_review") or {}).get("max_usd") or config["max_usd"]
+    limit = review_limit(config)
     if not asked_by:
         from meta_harness.planner import planning_spend
 
