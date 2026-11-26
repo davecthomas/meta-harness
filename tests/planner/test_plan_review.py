@@ -294,3 +294,63 @@ def test_a_plan_is_marked_while_its_review_runs_so_nothing_asks_for_its_approval
     assert plan_review.marked("g-1", None) is None
     monkeypatch.setattr(plan_review, "rows", lambda goal_id: [{"state": "done", "version": 2}])
     assert plan_review.marked("g-1", {"version": 2})["reviewing"] is False
+
+
+def test_cancel_ends_a_running_review_and_keeps_the_findings_it_recorded(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store"), draft("api")])
+    task = _review(client, tasks, events, goal)
+    events.emit(
+        "review_submitted",
+        {"verdict": "changes", "summary": "One order problem.", "findings": [ORDER]},
+        task_id=task["id"],
+    )
+
+    row = plan_review.cancel(goal["id"], tasks, events, "dave", "plan edited")
+
+    assert tasks.tasks[task["id"]]["status"] == "canceled"
+    assert row["state"] == "canceled" and [f["id"] for f in row["findings"]] == ["r1-1"]
+    shown = _plan(client, goal)["review"]
+    assert shown["state"] == "canceled" and shown["summary"] == "One order problem."
+    assert [f["id"] for f in shown["findings"]] == ["r1-1"]
+    assert events.events[-1][0] == "plan_review_finished"
+    assert plan_review.cancel(goal["id"], tasks, events, "dave", "again") is None
+
+
+def test_cancel_with_no_running_review_returns_none_and_cancels_nothing(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store")])
+    task = _review(client, tasks, events, goal)
+    _ends(client, tasks, events, goal, task, {"verdict": "clean", "summary": "", "findings": []})
+
+    assert plan_review.cancel(goal["id"], tasks, events, "dave", "plan edited") is None
+    assert tasks.tasks[task["id"]]["status"] == "closed"
+
+
+def test_a_review_canceled_before_it_submitted_anything_reads_canceled_with_no_findings(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store")])
+    task = _review(client, tasks, events, goal)
+
+    collected = _ends(client, tasks, events, goal, task, None, status="canceled")
+
+    assert collected["state"] == "canceled"
+    shown = _plan(client, goal)["review"]
+    assert shown["state"] == "canceled" and shown["findings"] == []
+
+
+def test_collect_reads_a_canceled_review_with_findings_as_canceled_and_does_not_revise(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store"), draft("api")])
+    task = _review(client, tasks, events, goal)
+
+    collected = _ends(
+        client, tasks, events, goal, task, {"verdict": "changes", "summary": "", "findings": [ORDER]}, "canceled"
+    )
+
+    assert collected["state"] == "canceled" and len(collected["findings"]) == 1
+    assert _plan(client, goal)["planning_task_id"] is None

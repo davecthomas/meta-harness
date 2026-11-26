@@ -18,6 +18,9 @@ what planning may spend unasked (planning_spend.py). What is still open after it
 planner fix it, approve anyway, or dismiss it.
 
 A review is of one plan version. An operator's edit makes another version, which is reviewed only when asked.
+Approving or editing the plan ends a review that is running (cancel): its task is canceled and the review
+keeps the findings it recorded, with state "canceled". After an edit that review still shows, with its
+findings, until a review of a later version starts, and its findings do not block approving the edited version.
 """
 
 import asyncio
@@ -242,6 +245,43 @@ def _since_operator(goal_id: str, found: list[dict]) -> list[dict]:
     return [r for r in found if r["version"] >= edited]
 
 
+def _submitted(events: Any, task_id: str) -> dict | None:
+    """What the task's reviewer last recorded with the review tool, or None."""
+    page = events.read(0, 5000, task_id=task_id, event_type="review_submitted")
+    last = max(page["events"], key=lambda e: e["position"], default=None)
+    return (last or {}).get("payload")
+
+
+def cancel(goal_id: str, tasks: Any, events: Any, who: str, reason: str) -> dict | None:
+    """Ends the goal's running review: cancels its task and keeps the findings it recorded, with state
+    "canceled". Returns the review's row, or None when no review runs. A task that already ended is no error."""
+    running = next((r for r in rows(goal_id) if r["state"] == "running"), None)
+    if running is None:
+        return None
+    try:
+        tasks.cancel(running["task_id"], reason, who)
+    except Exception as err:  # noqa: BLE001 - a task that already ended cannot be canceled, and the review ends
+        log.info("goal %s: plan review task %s was not canceled: %s", goal_id, running["task_id"], err)
+    review = _submitted(events, running["task_id"])
+    findings = parse(review, running["round"]) if review else []
+    summary = str((review or {}).get("summary") or "").strip()
+    _set(goal_id, running["version"], state="canceled", findings=findings, summary=summary)
+    events.emit(
+        "plan_review_finished",
+        {
+            "goal_id": goal_id,
+            "version": running["version"],
+            "round": running["round"],
+            "state": "canceled",
+            "findings": len(findings),
+            "blocking": sum(1 for f in findings if f["severity"] == BLOCKING),
+        },
+        actor=who,
+        tags={"goal_id": goal_id},
+    )
+    return {**running, "state": "canceled", "findings": findings, "summary": summary}
+
+
 def _set(goal_id: str, version: int, **fields: Any) -> None:
     sets = ", ".join(f"{name} = %s" for name in fields)
     values = [Jsonb(v) if name == "findings" else v for name, v in fields.items()]
@@ -266,7 +306,13 @@ def marked(goal_id: str, plan: dict | None) -> dict | None:
 def current(goal_id: str) -> dict | None:
     """The plan's review as its page shows it: who reviewed, how many rounds, whether one is running, and
     every finding of this run of reviews with its status, merged across rounds. None when there is none."""
-    found = _since_operator(goal_id, rows(goal_id))
+    every = rows(goal_id)
+    found = _since_operator(goal_id, every)
+    # A review canceled by an operator's edit is of the version before it: it stays, as it was, until a
+    # review of a later version starts, and what it found is not asked of the edited version.
+    stale = not found and bool(every) and every[-1]["state"] == "canceled"
+    if stale:
+        found = [every[-1]]
     if not found:
         return None
     findings = [f for r in found for f in r["findings"]]
@@ -285,8 +331,8 @@ def current(goal_id: str) -> dict | None:
         "counts": {
             "found": len(findings),
             "fixed": count(FIXED, REVISED),
-            "open": len(open_blocking),
-            "advice": sum(1 for f in findings if f["status"] == OPEN and f["severity"] == ADVICE),
+            "open": 0 if stale else len(open_blocking),
+            "advice": 0 if stale else sum(1 for f in findings if f["status"] == OPEN and f["severity"] == ADVICE),
             "dismissed": count(DISMISSED),
         },
     }
@@ -404,12 +450,7 @@ async def collect(goal: dict, tasks: Any, events: Any, issues_of: Any) -> dict |
     if task["status"] not in planning.ENDED:
         return None
 
-    def submitted() -> dict | None:
-        page = events.read(0, 5000, task_id=task["id"], event_type="review_submitted")
-        last = max(page["events"], key=lambda e: e["position"], default=None)
-        return (last or {}).get("payload")
-
-    review = await asyncio.to_thread(submitted)
+    review = await asyncio.to_thread(_submitted, events, task["id"])
     this_run = _since_operator(goal["id"], found)
     if review is None:
         # Its run ended with nothing recorded: said as it is, never as a clean review.
@@ -443,7 +484,7 @@ async def collect(goal: dict, tasks: Any, events: Any, issues_of: Any) -> dict |
         ]
         if changed != row["findings"]:
             await asyncio.to_thread(_set, goal["id"], row["version"], findings=changed)
-    state = "done" if task["status"] == "closed" else "partial"
+    state = "done" if task["status"] == "closed" else "canceled" if task["status"] == "canceled" else "partial"
     summary = str(review.get("summary") or "").strip()
     await asyncio.to_thread(_set, goal["id"], running["version"], state=state, findings=findings, summary=summary)
     blocking = [f for f in findings if f["severity"] == BLOCKING]
@@ -461,7 +502,7 @@ async def collect(goal: dict, tasks: Any, events: Any, issues_of: Any) -> dict |
         tags={"goal_id": goal["id"]},
     )
     collected = {**running, "state": state, "findings": findings, "summary": summary}
-    if not blocking or running["round"] >= max_rounds():
+    if not blocking or state == "canceled" or running["round"] >= max_rounds():
         return collected
 
     def untouched() -> bool:
@@ -503,7 +544,9 @@ async def collect(goal: dict, tasks: Any, events: Any, issues_of: Any) -> dict |
 def open_blocking(goal_id: str) -> list[dict]:
     """The findings that block and are still open, across this run of reviews."""
     review = current(goal_id)
-    return [f for f in (review or {}).get("findings") or [] if f["status"] == OPEN and f["severity"] == BLOCKING]
+    if not review or not review["counts"]["open"]:
+        return []
+    return [f for f in review["findings"] if f["status"] == OPEN and f["severity"] == BLOCKING]
 
 
 def settle(goal_id: str, finding_ids: list[str], status: str) -> int:
