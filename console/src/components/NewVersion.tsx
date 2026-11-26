@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Tooltip } from "@mantine/core";
+import { Button, Text, Tooltip } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
-import { notifications } from "@mantine/notifications";
 import { useLocation } from "react-router-dom";
 import { api } from "../api";
 import { anyUnsaved } from "./UnsavedChanges";
@@ -12,7 +11,7 @@ import { anyUnsaved } from "./UnsavedChanges";
 // with, the page loads the new console by itself at the next safe moment: when the tab is shown again, or on
 // the next move to another page. An editor holding unsaved changes holds the reload off, and the button here
 // stays for the operator to press when they are ready. A reload the page did by itself says so once it is back,
-// so the operator knows why the page started again.
+// in a line in the header that goes after a few seconds, so the operator knows why the page started again.
 
 export const EVERY_MS = 60_000;
 
@@ -32,23 +31,19 @@ function reloadBySelf(version: string): void {
   reloader.reload();
 }
 
-// Says once that the page reloaded itself for a new version, and forgets it.
-export function sayReloaded(): void {
-  let version: string | null = null;
+// The version a reload the page did by itself was for, read once and forgotten; null when there was none.
+export function reloadedFor(): string | null {
   try {
-    version = window.sessionStorage.getItem(RELOADED_FOR);
+    const version = window.sessionStorage.getItem(RELOADED_FOR);
     window.sessionStorage.removeItem(RELOADED_FOR);
+    return version;
   } catch {
-    return;
+    return null;
   }
-  if (!version) return;
-  notifications.show({
-    title: "Muxxy was updated",
-    message: version === "new" ? "The page reloaded to load the new version." : `The page reloaded to load version ${version}.`,
-    color: "teal",
-    autoClose: 8000,
-  });
 }
+
+// How long the header says the page updated itself.
+export const SAID_MS = 10_000;
 
 export function NewVersion() {
   const loaded = useRef<string | null>(null);
@@ -57,7 +52,15 @@ export function NewVersion() {
   const where = useLocation();
   const first = useRef(where.key);
 
-  useEffect(() => sayReloaded(), []);
+  // A quiet line in the header, where the button was, for a few seconds: no box over the page, nothing to close.
+  const [updated, setUpdated] = useState<string | null>(null);
+  useEffect(() => {
+    const version = reloadedFor();
+    if (!version) return;
+    setUpdated(version);
+    const timer = setTimeout(() => setUpdated(null), SAID_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const look = () =>
@@ -99,7 +102,14 @@ export function NewVersion() {
     if (newer !== null && where.key !== first.current && !anyUnsaved()) reloadBySelf(newer);
   }, [newer, where.key]);
 
-  if (newer === null) return null;
+  if (newer === null) {
+    if (!updated) return null;
+    return (
+      <Text size="xs" c="teal" fw={500} role="status" data-testid="updated-note">
+        {updated === "new" ? "Updated just now" : `Updated to version ${updated}`}
+      </Text>
+    );
+  }
   return (
     <Tooltip label="A newer version was deployed since this page opened. It loads when you next change page." withArrow>
       <Button size="xs" variant="filled" color="teal" leftSection={<IconRefresh size={14} />} onClick={() => reloader.reload()}>
