@@ -30,6 +30,11 @@ export function SectionTitle(props: { children: ReactNode; right?: ReactNode }) 
   );
 }
 
+// The heading of a part of a section, a step under SectionTitle: what the few lines under it are about.
+export function SubTitle(props: { children: ReactNode; mt?: string | number; mb?: string | number }) {
+  return <Title order={5} mt={props.mt} mb={props.mb ?? 4}>{props.children}</Title>;
+}
+
 // Where a task or goal stands, in the console's words for it, with what that means on hover and for a screen
 // reader (components/status.ts).
 export function StatusBadge({ status }: { status: string }) {

@@ -1,6 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { Notifications } from "@mantine/notifications";
 import { useState } from "react";
 import { MemoryRouter, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -43,7 +42,6 @@ function Editor() {
 function show() {
   render(
     <MantineProvider theme={theme}>
-      <Notifications />
       <MemoryRouter>
         <Mover />
         <Editor />
@@ -83,8 +81,7 @@ test("a page that reloaded itself says so once it is back", async () => {
   vi.useRealTimers();
   window.sessionStorage.setItem(RELOADED_FOR, "0.2.0");
   show();
-  expect(await screen.findByText("The page reloaded to load version 0.2.0.")).toBeTruthy();
-  expect(screen.getByText("Muxxy was updated")).toBeTruthy();
+  expect((await screen.findByTestId("updated-note")).textContent).toBe("Updated to version 0.2.0");
   expect(window.sessionStorage.getItem(RELOADED_FOR)).toBeNull();
 });
 

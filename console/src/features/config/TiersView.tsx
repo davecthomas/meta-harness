@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, Button, Card, Code, Group, SimpleGrid, Stack, Text, Tooltip } from "@mantine/core";
 import { IconArrowDown, IconArrowUp, IconPlus, IconTrash } from "@tabler/icons-react";
 import { InlineField } from "../../components/InlineField";
-import { Facts } from "../../components/ui";
+import { Facts, SubTitle } from "../../components/ui";
 import { useState } from "react";
 import { ClassifierFields, type ClassifierList } from "./ClassifierFields";
 import { changed, Reasons, stageOptional, type Staging } from "./ConfigViews";
@@ -245,7 +245,7 @@ function TierCard({ staging: s, tier, index, count, profiles, models, onRemoved 
         readOnly={s.readOnly}
         onCommit={(v) => stageOptional(s, [...path, "description"], v.trim())}
       />
-      <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt="md" mb={6}>Candidates, in order</Text>
+      <SubTitle mt="md">Candidates, in order</SubTitle>
       <Stack gap={6}>
         {candidates.map((candidate, i) => {
           const { profile, model } = splitCandidate(String(candidate));

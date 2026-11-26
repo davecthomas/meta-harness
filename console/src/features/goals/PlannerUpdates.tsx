@@ -3,7 +3,7 @@ import { Alert, Anchor, Badge, Button, Collapse, Group, Loader, Paper, Stack, Te
 import { IconRefresh } from "@tabler/icons-react";
 import { VoiceMark } from "../../components/Voice";
 import { api } from "../../api";
-import { when } from "../../components/ui";
+import { SubTitle, when } from "../../components/ui";
 import { NeedButton, type Need } from "./needActions";
 import { reloadNeeds } from "../overview/needsYou";
 
@@ -221,7 +221,7 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
             <>
               {!replaced && notes.length > 0 && (
                 <Stack gap={2} data-testid="planner-notes">
-                  <Text size="sm" fw={600}>Worth weighing</Text>
+                  <SubTitle>Worth weighing</SubTitle>
                   {notes.map((note) => <Text key={note} size="sm">{note}</Text>)}
                 </Stack>
               )}

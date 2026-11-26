@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Button, Group, Paper, Stack, Text, Textarea } from "@mantine/core";
+import { Button, Group, Paper, Stack, Textarea } from "@mantine/core";
 import { IconPlayerStop, IconSend } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
 import { api } from "../../api";
-import { ErrorAlert } from "../../components/ui";
+import { ErrorAlert, SubTitle } from "../../components/ui";
 
 // Steer a running task: a message the agent reads at its next turn, or one it gets when it would stop, or stop
 // the run after the turn in progress, keeping its work. Each is recorded with the operator as actor.
@@ -33,7 +33,7 @@ export function SteerBox({ taskId }: { taskId: string }) {
   return (
     <Paper withBorder p="sm" mb="md">
       <Stack gap="xs">
-        <Text size="sm" fw={600}>Steer the run</Text>
+        <SubTitle>Steer the run</SubTitle>
         <ErrorAlert error={error} />
         <Textarea aria-label="Message to the agent" placeholder="A message for the agent" autosize minRows={2} value={text} onChange={(e) => setText(e.currentTarget.value)} />
         <Group justify="space-between">
