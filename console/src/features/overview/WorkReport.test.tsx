@@ -203,3 +203,20 @@ test("an answer that suggests no step has no button", async () => {
   await screen.findByText("Nothing is waiting.");
   expect(screen.queryByTestId("answer-actions")).toBeNull();
 });
+
+test("a report the goals have moved past is not shown as how things stand, and it reads again when the work changes", async () => {
+  const { workChanged } = await import("../goals/goalSync");
+  let stale = true;
+  const report = { headline: "Review button goal plan is ready for your approval.", moving: [], not_moving: [], needs_you: [], spend: "", finished: "", written_at: "2026-11-26T12:00:00Z" };
+  vi.stubGlobal("fetch", (url: string) => {
+    if (String(url).includes("/v1/overview/report")) return Promise.resolve(new Response(JSON.stringify({ report: stale ? report : { ...report, headline: "Two tasks are running." }, written: !stale, stale, note: stale ? "The next one comes soon." : null }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    return Promise.resolve(new Response(JSON.stringify({ needs: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  });
+  render(<MantineProvider theme={theme}><MemoryRouter><WorkReport /></MemoryRouter></MantineProvider>);
+  expect((await screen.findByTestId("work-report-stale")).textContent).toBe("The work changed since this report. A new one is on its way.");
+  expect(screen.queryByText("Review button goal plan is ready for your approval.")).toBeNull();
+  stale = false;
+  workChanged();
+  expect(await screen.findByText("Two tasks are running.")).toBeTruthy();
+  expect(screen.queryByTestId("work-report-stale")).toBeNull();
+});

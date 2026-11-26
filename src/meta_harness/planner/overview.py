@@ -693,8 +693,12 @@ class Overview:
     def spent_today(self) -> Decimal:
         return self.spent.get(_today(), Decimal(0))
 
-    def view(self, written: bool = False, note: str | None = None, error: str | None = None) -> dict[str, Any]:
-        return {"report": self.latest, "written": written, "note": note, "error": error}
+    def view(
+        self, written: bool = False, note: str | None = None, error: str | None = None, stale: bool = False
+    ) -> dict[str, Any]:
+        """stale: the goals have moved since the report was written and no new one could be written yet. Its
+        words are then about how things were, and a page must not show them as how things stand."""
+        return {"report": self.latest, "written": written, "note": note, "error": error, "stale": stale}
 
     def _needs(self, goal_id: str, most: int = actions.MAX_FOR_GOAL) -> tuple[dict, list[dict]]:
         """The goal, and what its records say it needs now: the one list every page reads (needs.py)."""
@@ -792,13 +796,16 @@ class Overview:
             return self.view()
         written_at = _when(before.get("written_at")) if before else None
         if written_at and (datetime.now(UTC) - written_at).total_seconds() < float(config["min_seconds"]):
-            return self.view(note=f"This report was written at {before['written_at']}. The next one comes soon.")
+            return self.view(
+                note=f"This report was written at {before['written_at']}. The next one comes soon.", stale=True
+            )
         limit = Decimal(str(config["max_usd"]))
         if self.spent_today() >= limit:
             when = (before or {}).get("written_at") or "no time yet"
             return self.view(
                 note=f"Today's reports have spent ${self.spent_today()} of their ${limit} limit, so no new one "
-                f"is written until tomorrow (UTC). This report was written at {when}."
+                f"is written until tomorrow (UTC). This report was written at {when}.",
+                stale=before is not None,
             )
         try:
             if found["goals"] or found["finished_since_operator_looked"]:
@@ -810,7 +817,7 @@ class Overview:
                 raise OverviewError("the model wrote an empty report")
         except OverviewError as err:
             self._failed(f"the Overview report could not be written: {err}")
-            return self.view(error=str(err))
+            return self.view(error=str(err), stale=before is not None)
         self.failed = None
         passed = await _checked(written)
         titles = {g["goal_id"]: g["title"] for g in found["goals"]}

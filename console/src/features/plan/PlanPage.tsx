@@ -7,6 +7,7 @@ import { ApprovedPlan, GoalPlan } from "../goals/GoalPlan";
 import { APPROVE_PLAN, FixFacts, PLAN_CHANGED, REPLAN } from "../goals/PlannerUpdates";
 import { EVENT_BY_DO } from "../goals/needActions";
 import { reloadNeeds } from "../overview/needsYou";
+import { useGoalChanged, useGoalStream } from "../goals/goalSync";
 
 // The plan's page. A plan is what the operator decides on before any work starts, so it has a page of its own,
 // laid out for that decision: what is being asked, with its buttons; a few figures; what changed and why, as
@@ -289,7 +290,7 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
                 onChange={(event) => void run(() => api.setPlanReview(goal.id, event.currentTarget.checked))}
               />
               {review?.state !== "running" && review?.version !== plan.plan?.version && (
-                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>Review this plan</Button>
+                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>{plan.review_usd ? `Review this plan (up to $${plan.review_usd})` : "Review this plan"}</Button>
               )}
             </Group>
           )
@@ -482,6 +483,8 @@ export function PlanPage() {
   const navigate = useNavigate();
   const [goal, setGoal] = useState<Goal | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  // The plan's page follows the goal as the goal's page does (goalSync.ts).
+  useGoalStream(goalId || undefined);
   const [versions, setVersions] = useState<PlanVersion[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -494,6 +497,7 @@ export function PlanPage() {
     }
   }, [goalId]);
   useEffect(() => void load(), [load]);
+  useGoalChanged(goalId || undefined, () => void load());
 
   // The versions are read again whenever the plan shown is another one.
   const version = plan?.plan?.version;

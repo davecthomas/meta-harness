@@ -2,9 +2,9 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
-import type { GoalPlan as Plan, PlanAsk } from "../../api";
+import type { Goal, GoalPlan as Plan, PlanAsk } from "../../api";
 import { theme } from "../../theme";
-import { DecisionBar, Glance, History, OpenQuestions, SHOWN_BEFORE_COUNTING, WhatChanged } from "./PlanPage";
+import { DecisionBar, Glance, History, ReviewPart, OpenQuestions, SHOWN_BEFORE_COUNTING, WhatChanged } from "./PlanPage";
 
 afterEach(() => {
   cleanup();
@@ -54,6 +54,16 @@ test("no ask is more than two sentences and 280 characters, or a list, before it
     expect(bar.querySelectorAll("li").length, ask.state).toBe(0);
     unmount();
   }
+});
+
+test("the review button shows its spend limit as given, and the plain label without one", () => {
+  const goal = { id: "g-1", status: "planning" } as unknown as Goal;
+  const plan = { goal_id: "g-1", status: "planning", plan: { version: 2 } };
+  const { unmount } = shown(<ReviewPart plan={{ ...plan, review_usd: "4.00" } as unknown as Plan} goal={goal} onChanged={() => undefined} />);
+  expect(screen.getByRole("button", { name: "Review this plan (up to $4.00)" })).toBeTruthy();
+  unmount();
+  shown(<ReviewPart plan={plan as unknown as Plan} goal={goal} onChanged={() => undefined} />);
+  expect(screen.getByRole("button", { name: "Review this plan" })).toBeTruthy();
 });
 
 test("a plan that is being written asks nothing", () => {

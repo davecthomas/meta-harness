@@ -129,8 +129,8 @@ def create_app(database_url: str | None = None, service_keys: dict[str, str] | N
 
     app = FastAPI(title="meta-harness event service", lifespan=lifespan)
 
-    def _filters(run_id, task_id, event_type, source) -> dict[str, str]:
-        given = {"run_id": run_id, "task_id": task_id, "event_type": event_type, "source": source}
+    def _filters(run_id, task_id, event_type, source, goal_id=None) -> dict[str, str]:
+        given = {"run_id": run_id, "task_id": task_id, "event_type": event_type, "source": source, "goal_id": goal_id}
         return {k: v for k, v in given.items() if v is not None}
 
     @app.get("/health")
@@ -154,14 +154,15 @@ def create_app(database_url: str | None = None, service_keys: dict[str, str] | N
         task_id: str | None = None,
         event_type: str | None = None,
         source: str | None = None,
+        goal_id: str | None = None,
         from_position: int = 0,
         before_position: int | None = None,
         limit: int = Query(500, ge=1, le=5000),
         who: str = Depends(service),
     ) -> dict[str, Any]:
         """A comma-separated filter value matches any of its parts. before_position returns the last
-        `limit` events before it, for paging back."""
-        filters = _filters(run_id, task_id, event_type, source)
+        `limit` events before it, for paging back. goal_id: a goal's own events and its tasks'."""
+        filters = _filters(run_id, task_id, event_type, source, goal_id)
         with app.state.pool.connection() as conn:
             events = store.read(conn, filters, from_position, limit, before_position)
             latest = conn.execute("SELECT coalesce(max(position), 0) FROM events.event").fetchone()[0]
@@ -175,12 +176,18 @@ def create_app(database_url: str | None = None, service_keys: dict[str, str] | N
         task_id: str | None = None,
         event_type: str | None = None,
         source: str | None = None,
+        goal_id: str | None = None,
         from_position: int = 0,
         who: str = Depends(service),
     ) -> StreamingResponse:
+        """goal_id: only a goal's events, or several goals' with commas. from_position below 0 starts at the
+        newest event, for a page that wants what happens from now on."""
         last_event_id = request.headers.get("last-event-id")
         cursor = int(last_event_id) if last_event_id and last_event_id.isdigit() else from_position
-        filters = _filters(run_id, task_id, event_type, source)
+        if cursor < 0:
+            with app.state.pool.connection() as conn:
+                cursor = conn.execute("SELECT coalesce(max(position), 0) FROM events.event").fetchone()[0]
+        filters = _filters(run_id, task_id, event_type, source, goal_id)
         return StreamingResponse(
             _tail(app, request, filters, cursor),
             media_type="text/event-stream",

@@ -520,11 +520,38 @@ def test_a_new_plan_version_brings_a_new_update_and_the_page_is_told_where_the_p
     edited = client.put(f"/v1/goals/{goal['id']}/plan", json={"drafts": [draft("store")]}, headers=OPERATOR)
     assert edited.status_code == 200, edited.text
     shown = client.get(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR).json()
-    assert (shown["updates"][0]["plan_version"], shown["plan"]) == (1, {"version": 2, "replanning": False}), (
+    assert (shown["stale"], shown["plan"]) == (True, {"version": 2, "replanning": False}), (
         "until the next update is written, the page can tell this one is about a plan since replaced"
     )
 
-    second = _write(_goal(client, goal["id"]), tasks, events, writer)
+    # The page's read found the update out of date, so the planner writes the new one at once.
+    for _ in range(50):
+        second = client.get(f"/v1/goals/{goal['id']}/updates", headers=OPERATOR).json()["updates"][0]
+        if second["plan_version"] == 2:
+            break
 
     assert (first["plan_version"], second["plan_version"]) == (1, 2), "a new version is news by itself"
     assert client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()["status"] == "planning"
+
+
+def test_a_page_is_told_when_the_goal_moved_since_its_update_and_the_new_one_is_written_at_once(world, at_once):
+    client, events, tasks, writer = world
+    goal = _feature(client)
+    _write(goal, tasks, events, writer)
+    at = f"/v1/goals/{goal['id']}/updates"
+    current = client.get(at, headers=OPERATOR).json()
+    assert current["stale"] is False and len(writer.calls) == 1, "nothing moved: the update is how things stand"
+
+    # The plan arrives: the update on the page still says it is being drafted.
+    _planned(client, events, tasks, goal, [draft("store")])
+    moved = client.get(at, headers=OPERATOR).json()
+
+    assert moved["stale"] is True, "the page holds the old words back"
+    # The planner writes the new update now, without waiting for its next pass, and the page is in step again.
+    for _ in range(50):
+        if len(writer.calls) == 2:
+            break
+        client.get("/v1/goals", headers=OPERATOR)
+    assert len(writer.calls) == 2
+    after = client.get(at, headers=OPERATOR).json()
+    assert after["stale"] is False and after["updates"][0]["number"] == 2

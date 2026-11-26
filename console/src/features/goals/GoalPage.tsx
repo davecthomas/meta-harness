@@ -17,6 +17,7 @@ import { LeftOpenIssues } from "./LeftOpenIssues";
 import { GoalBoard, GoalGraph, GoalProgress } from "./GoalBoard";
 import { NoSuchRecord, isNotFound } from "../../components/NoSuchRecord";
 import { GoalStanding } from "./GoalStanding";
+import { goalChanged, useGoalChanged, useGoalStream } from "./goalSync";
 import { PlanBody } from "../plan/PlanPage";
 import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
@@ -196,6 +197,13 @@ export function GoalPage() {
   // and rereads the goal's issues every few seconds, because an issue with no task yet has nothing to listen
   // to: without that, a started goal's cards sat in Queued until a reload. Not while the tab is hidden.
   const closed = goal ? ["met", "canceled"].includes(goal.status) : true;
+  // Whatever changes the goal (an action here, the planner, a run, another operator), every part of this page
+  // reads again together (goalSync.ts). The timer under this is the fallback for while the stream is down.
+  useGoalStream(closed ? undefined : goalId);
+  useGoalChanged(goalId, () => {
+    void load(true);
+    void loadProgress();
+  });
   useEffect(() => {
     if (closed) return;
     const refresh = () => {
@@ -237,8 +245,10 @@ export function GoalPage() {
     try {
       await action();
       setError(null);
-      // The action changed what the goal's issues are doing: the board rereads at once, with the goal.
+      // The action changed what the goal's issues are doing: the board rereads at once, with the goal, and
+      // so does every other part of the page.
       await Promise.all([load(), loadProgress()]);
+      goalChanged(goalId);
     } catch (err) {
       // What was pressed did not happen: say so, since reloading would not do it either.
       const after = afterFailedChange(err);
@@ -253,6 +263,7 @@ export function GoalPage() {
   async function saveField(fields: Partial<Goal>) {
     const saved = await api.patchGoal(goalId, fields);
     setGoal((now) => (now ? { ...now, ...saved, issues: now.issues } : now));
+    goalChanged(goalId);
     // A new label or repos changes which open issues a goal not started yet would take in.
     if ("label" in fields || "repos" in fields) void load();
     // New repos let go of the issues with no task yet in the repos dropped.
@@ -376,7 +387,15 @@ export function GoalPage() {
       {/* A goal being planned shows its plan here, laid out for its decision, so the operator reads it where they
           land. Otherwise the planner's word on the goal leads the page. */}
       {goal.status === "planning" ? (
-        <PlanBody goal={goal} onChanged={() => void load(true)} onApproved={() => void load()} />
+        <PlanBody
+          goal={goal}
+          onChanged={() => void load(true)}
+          onApproved={() => {
+            // Approved: the goal is running now, and every part of the page says so in the same moment.
+            void load().then(() => goalChanged(goalId));
+            void loadProgress();
+          }}
+        />
       ) : (
         <PlannerUpdates goalId={goal.id} open={open} label={goal.label ?? null} />
       )}
