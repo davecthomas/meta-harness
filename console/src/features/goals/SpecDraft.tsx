@@ -1,5 +1,6 @@
+import { AiTyping } from "../../components/AiWriting";
 import { useEffect, useRef, useState } from "react";
-import { Anchor, Group, Loader, Text } from "@mantine/core";
+import { Anchor, Text } from "@mantine/core";
 import { api } from "../../api";
 import type { GoalSpec } from "./SpecField";
 
@@ -93,11 +94,11 @@ export function useSpecDraft({ spec, repos, tracker, trackerSettings, title, sta
   if (!spec) return { writing, element: null };
   const name = specName(spec);
   const kept = made && (statement !== made.statement || title !== made.title) && filled.current.statement === undefined;
+  // While it writes, the description field shows it inside (components/AiWriting.tsx): this line names the source.
   const element = writing ? (
-    <Group gap="xs" data-testid="spec-draft-writing">
-      <Loader size="xs" />
-      <Text size="sm" c="dimmed">Writing the title and description from {name}. You can type over them.</Text>
-    </Group>
+    <div data-testid="spec-draft-writing">
+      <AiTyping>AI is reading {name}</AiTyping>
+    </div>
   ) : error ? (
     <Text size="sm" c="orange" role="alert" data-testid="spec-draft-failed">
       The title and description were not written from {name}: {error}{" "}

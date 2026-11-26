@@ -7,6 +7,7 @@ import { SubTitle, when } from "../../components/ui";
 import { NeedButton, type Need } from "./needActions";
 import { reloadNeeds } from "../overview/needsYou";
 import { useGoalChanged } from "./goalSync";
+import { AiTyping } from "../../components/AiWriting";
 
 // The need's shape, its actions and the events a need's button sends live with the buttons (needActions.tsx).
 // They are named here too, for the pages that have always read them from the planner's panel.
@@ -197,10 +198,10 @@ export function PlannerUpdates({ goalId, open, planning = false, label = null }:
               Goal Planner{latest ? ` · ${since(latest.created_at)}` : ""}
             </Text>
             {latest && moved ? (
-              <Group gap="xs" wrap="nowrap" role="status" data-testid="planner-moved">
-                <Loader size="xs" />
+              <Stack gap={4} data-testid="planner-moved">
                 <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">This goal just changed. I'm writing what's new.</Text>
-              </Group>
+                <AiTyping />
+              </Stack>
             ) : latest ? (
               <Text size="xl" fw={650} lh={1.3} data-testid="planner-headline">{latest.headline}</Text>
             ) : (

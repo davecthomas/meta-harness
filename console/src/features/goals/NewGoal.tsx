@@ -37,6 +37,7 @@ import { api, refLabel, type IssueSource, type LabelIssue, type Tracker, type Us
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { RepoPick } from "./RepoPick";
+import { AiTyping, aiWriting } from "../../components/AiWriting";
 import { useSimilarGoals } from "./SimilarGoals";
 import { ImproveGoal } from "./ImproveGoal";
 import { SpecField, type GoalSpec } from "./SpecField";
@@ -138,6 +139,8 @@ export function NewGoal() {
   // Whether the operator wrote or changed the description: a drafted one is written again as its issues change.
   const [statementOwn, setStatementOwn] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  // Improve with AI is rewriting the description: the field says so while it does.
+  const [improving, setImproving] = useState(false);
   // Issues picked by ref: the goal holds these besides its label's, and needs no label when there are some.
   const [refs, setRefs] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
@@ -582,12 +585,14 @@ export function NewGoal() {
                   setStatement(e.currentTarget.value);
                   setStatementOwn(Boolean(e.currentTarget.value.trim()));
                 }}
+                {...aiWriting(specDraft.writing || drafting || improving, statement, improving ? "AI is improving it" : "AI is writing")}
                 data-testid="description"
               />
               {similar.panel}
               {source === "spec" && specDraft.element}
               <ImproveGoal
                 statement={statement}
+                onWriting={setImproving}
                 context={{
                   ...(title.trim() ? { title: title.trim() } : {}),
                   repos: chosen,
@@ -613,10 +618,9 @@ export function NewGoal() {
           {reached >= 4 && source && (
             <Panel n={4} question="How does it run?" answer={runsAnswer} open={open(4)} done={done(4) || reached >= 4} onEdit={() => go(4)}>
               {drafting && (
-                <Group gap="xs" data-testid="drafting">
-                  <Loader size="xs" />
-                  <Text size="sm" c="dimmed">Writing the description from the issues…</Text>
-                </Group>
+                <div data-testid="drafting">
+                  <AiTyping>AI is writing the description from the issues</AiTyping>
+                </div>
               )}
               <div>
                 <Text size="sm" fw={500} mb={4}>How much it does without asking</Text>

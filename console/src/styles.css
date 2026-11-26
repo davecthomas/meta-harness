@@ -92,3 +92,18 @@ button:focus-visible > .mh-choice { outline: 2px solid var(--mantine-primary-col
 /* No border of its own: what it holds is already boxed, and a box in a box in a box reads as clutter. */
 .mh-scroll { max-height: min(62vh, 640px); overflow-y: auto; padding-right: 6px; }
 .mh-scroll:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 2px; }
+
+/* A model writing (components/AiWriting.tsx): a sparkle that glints and three dots that rise and fall in turn.
+   Inside a field it sits over the empty space, or in the corner once text has arrived, and takes no click. */
+.mh-ai-in-field { position: absolute; left: 12px; top: 8px; pointer-events: none; }
+.mh-ai-in-corner { position: absolute; right: 8px; top: 6px; pointer-events: none; padding: 1px 6px; border-radius: 6px; background: var(--mantine-color-body); }
+.mh-ai-sparkle { color: var(--mantine-color-grape-5); animation: mh-ai-glint 1.6s ease-in-out infinite; }
+.mh-ai-dots { display: inline-flex; gap: 3px; align-items: flex-end; height: 10px; }
+.mh-ai-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--mantine-color-grape-5); animation: mh-ai-dot 1.2s ease-in-out infinite; }
+.mh-ai-dots span:nth-child(2) { animation-delay: 0.15s; }
+.mh-ai-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes mh-ai-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
+@keyframes mh-ai-glint { 0%, 100% { opacity: 0.6; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) {
+  .mh-ai-sparkle, .mh-ai-dots span { animation: none; opacity: 1; }
+}
