@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import { theme } from "../../theme";
-import { FIX_REASONS_SHOWN, PlannerUpdates, since } from "./PlannerUpdates";
+import { PlannerUpdates, since } from "./PlannerUpdates";
 
 function respond(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
@@ -159,70 +159,6 @@ test("every need comes with the button that resolves it, from its task's state n
   window.removeEventListener("mh:open-settings", settings);
 });
 
-test("a fix shows why it was drafted and its changes as counts, however many tasks it touches", async () => {
-  // A fix for two gaps once showed a line for each of forty tasks, joined into one paragraph nobody could read.
-  const fixes = Array.from({ length: 7 }, (_, i) => ({ gap: `Gap ${i + 1}.`, change: `Fix ${i + 1}.` }));
-  const fix = { what: "I drafted a fix for the plan. Accept it?", ref: "", action: "accept_fix", changes: ["2 tasks added", "38 tasks reworded"], fixes };
-  show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, () => respond({}), true);
-
-  const [row] = await screen.findAllByTestId("planner-need");
-  const reasons = within(row).getAllByTestId("planner-fix-reason");
-  expect(reasons).toHaveLength(FIX_REASONS_SHOWN);
-  expect(reasons[0].textContent).toBe("Fix 1. Gap 1.");
-  expect(row.textContent).toContain("and 2 more");
-  expect(within(row).getByTestId("planner-fix-counts").textContent).toBe("2 tasks added38 tasks reworded");
-});
-
-test("a fix the planner drafted is accepted or dismissed from the panel, with what it changes", async () => {
-  const fix = { what: "I can run the api after the store so they don't clash. Accept?", ref: "", action: "accept_fix", changes: ["1 task reordered"] };
-  let changed = 0;
-  const onChanged = () => (changed += 1);
-  window.addEventListener("mh:plan-changed", onChanged);
-  const posts = show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, () => respond({}), true);
-
-  const [row] = await screen.findAllByTestId("planner-need");
-  expect(row.textContent).toContain("1 task reordered");
-  fireEvent.click(within(row).getByRole("button", { name: "Update the plan" }));
-  const dialog = await screen.findByRole("dialog");
-  expect(dialog.textContent).toContain("You still approve the plan before anything runs.");
-  fireEvent.click(within(dialog).getByRole("button", { name: "Accept" }));
-  await waitFor(() => expect(posts).toContain("/v1/goals/g-1/suggestion/accept"));
-  await waitFor(() => expect(changed).toBe(1));
-
-  // Once the update asked for after the accept has arrived, the needs are shown again.
-  const [again] = await screen.findAllByTestId("planner-need");
-  fireEvent.click(within(again).getByRole("button", { name: "Dismiss" }));
-  await waitFor(() => expect(posts).toContain("/v1/goals/g-1/suggestion/dismiss"));
-  window.removeEventListener("mh:plan-changed", onChanged);
-});
-
-test("after a fix is accepted the panel says what is happening, in place of the button, until the new update arrives", async () => {
-  const fix = { what: "I can run the api after the store. Accept?", ref: "", action: "accept_fix", changes: ["Build api now waits for Build store"] };
-  // The update asked for after the accept is a model call: it is held here until the test lets it answer.
-  let answer: (value: Response | PromiseLike<Response>) => void = () => undefined;
-  let posted = 0;
-  // The accept itself answers at once; the request for an update after it is the slow one.
-  const slow = () => (posted++ === 0 ? respond({}) : new Promise<Response>((resolve) => { answer = resolve; }));
-  show([{ updates: [{ ...LATEST, needs_you: [fix] }], enabled: true, error: null }], true, slow, true);
-
-  const [row] = await screen.findAllByTestId("planner-need");
-  fireEvent.click(within(row).getByRole("button", { name: "Update the plan" }));
-  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept" }));
-
-  const told = await screen.findByTestId("planner-acted");
-  expect(told.textContent).toContain("Done. I'm writing what changed");
-  expect(screen.queryByRole("button", { name: "Update the plan" })).toBeNull();
-  answer(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
-  await waitFor(() => expect(screen.queryByTestId("planner-acted")).toBeNull());
-});
-
-test("a need written before needs had actions still gets a button: on a goal being planned, the approval", async () => {
-  show([{ updates: [{ ...LATEST, needs_you: [{ what: "Review and approve the plan.", ref: "" }] }], enabled: true, error: null }], true, undefined, true);
-
-  const [row] = await screen.findAllByTestId("planner-need");
-  expect(within(row).getByRole("button", { name: "Approve the plan" })).toBeTruthy();
-});
-
 test("nothing is shown with updates off, or on a closed goal that never had one", async () => {
   show([{ updates: [LATEST], enabled: false, error: null }]);
   await waitFor(() => expect(screen.queryByTestId("planner-updates")).toBeNull());
@@ -261,50 +197,63 @@ test("an ended goal's last update asks for nothing: no need, no button, no next 
   expect(screen.queryByText(/It will merge once its checks pass/)).toBeNull();
 });
 
-const ABOUT_V1 = {
-  ...FIRST,
-  number: 2,
-  headline: "Plan ready, but two tasks are too big to approve.",
-  needs_you: [{ what: "Decide whether to split the two large tasks or draft a new plan.", ref: "", action: "approve_plan" }],
-  next: "Tasks start once you approve.",
-  plan_version: 1,
-};
+// A goal being planned: the panel says the plan's own state, read as the page is. plan: what GET
+// /v1/goals/g-1/plan answers; updates: what the updates read answers.
+function showPlanning(plan: unknown, updates: unknown) {
+  vi.stubGlobal("fetch", (url: string) => (String(url) === "/v1/goals/g-1/plan" ? respond(plan) : respond(updates)));
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter>
+        <PlannerUpdates goalId="g-1" open planning />
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+}
+const STALE = { number: 1, headline: "Plan not yet written.", body: "No plan yet for this goal.", needs_you: [], next: "I will draft a plan for you to review.", created_at: NOW, plan_version: null };
+const APPROVE = { state: "ready", says: "The plan is ready, with 2 tasks.", buttons: [{ action: "approve_plan", label: "Approve the plan" }] };
+const CHECKING = { state: "improving", says: "gpt-6-sol is checking the plan for problems.", buttons: [] };
 
-test("an update about a plan version since replaced asks nothing, and says the next one is being written", async () => {
-  show([{ updates: [ABOUT_V1], enabled: true, error: null, plan: { version: 2, replanning: false } }], true, undefined, true);
-
-  const replaced = await screen.findByTestId("planner-plan-replaced");
-  expect(replaced.textContent).toContain("I wrote this about version 1 of the plan. The plan is now version 2");
+test("while a second model checks the plan, the panel says only that, and asks for nothing", async () => {
+  // The update is from before the plan was written, and the needs list still held an approval.
+  showPlanning({ plan: { version: 2 }, decision: CHECKING }, { updates: [STALE], needs: [{ what: "The plan is ready, with 2 new tasks.", ref: "", action: "approve_plan" }] });
+  await waitFor(() => expect(screen.getByTestId("planner-headline").textContent).toBe("gpt-6-sol is checking the plan for problems."));
+  const panel = screen.getByTestId("planner-updates").textContent ?? "";
+  expect(panel).toContain("Nothing needs you until this is done.");
+  expect(panel).not.toContain("Plan not yet written");
+  expect(panel).not.toContain("I will draft a plan");
+  expect(panel).not.toContain("The plan is ready");
   expect(screen.queryByTestId("planner-needs-you")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
-  expect(screen.queryByText(/Tasks start once you approve/)).toBeNull();
-  cleanup();
-
-  // The same update while its version is still the plan keeps its need.
-  show([{ updates: [ABOUT_V1], enabled: true, error: null, plan: { version: 1, replanning: false } }], true, undefined, true);
-  expect(await screen.findByRole("button", { name: "Approve the plan" })).toBeTruthy();
-  expect(screen.queryByTestId("planner-plan-replaced")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Approve/ })).toBeNull();
+  expect(screen.getByRole("link", { name: "Open the plan" }).getAttribute("href")).toBe("/goals/g-1/plan");
 });
 
-test("while the planner writes a new version, nothing about the plan is asked", async () => {
-  show([{ updates: [ABOUT_V1], enabled: true, error: null, plan: { version: 1, replanning: true } }], true, undefined, true);
-
-  expect((await screen.findByTestId("planner-replanning")).textContent).toContain("I'm writing a new version of the plan");
+test("a plan waiting to be decided says so once, with the one button to its page", async () => {
+  const about = { ...STALE, number: 2, headline: "Plan ready for your approval.", body: "Two tasks that can run side by side.", plan_version: 2 };
+  showPlanning({ plan: { version: 2 }, decision: APPROVE }, { updates: [about, STALE], needs: [{ what: "The plan is ready, with 2 new tasks.", ref: "", action: "approve_plan" }] });
+  await waitFor(() => expect(screen.getByTestId("planner-headline").textContent).toBe("The plan is ready, with 2 tasks."));
+  const panel = screen.getByTestId("planner-updates").textContent ?? "";
+  // The planner's words about this version show under the state; the approval is asked once, by the button.
+  expect(panel).toContain("Two tasks that can run side by side.");
+  expect(panel).not.toContain("Plan ready for your approval.");
   expect(screen.queryByTestId("planner-needs-you")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+  expect(screen.getAllByRole("link")).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Review and approve the plan" }).getAttribute("href")).toBe("/goals/g-1/plan");
 });
 
-test("a plan that cannot be approved is offered to be planned again, never approved", async () => {
-  const heard: string[] = [];
-  const hear = () => heard.push("replan");
-  window.addEventListener("mh:replan", hear);
-  const stuck = { ...ABOUT_V1, needs_you: [{ ...ABOUT_V1.needs_you[0], action: "fix_plan" }] };
-  show([{ updates: [stuck], enabled: true, error: null, plan: { version: 1, replanning: false } }], true, undefined, true);
+test("words written about an earlier version of the plan are not shown beside this one", async () => {
+  const old = { ...STALE, headline: "Plan ready for your approval.", body: "About version 1.", plan_version: 1 };
+  showPlanning({ plan: { version: 2 }, decision: APPROVE }, { updates: [old] });
+  await waitFor(() => expect(screen.getByTestId("planner-headline").textContent).toBe("The plan is ready, with 2 tasks."));
+  expect(screen.getByTestId("planner-updates").textContent).not.toContain("About version 1.");
+});
 
-  fireEvent.click(await screen.findByRole("button", { name: "Plan again" }));
-  window.removeEventListener("mh:replan", hear);
+test("a need that is not about the plan still shows while the goal is planned", async () => {
+  showPlanning({ plan: { version: 1 }, decision: CHECKING }, { updates: [STALE], needs: [{ what: "The goal has reached its budget.", ref: "", action: "raise_budget" }] });
+  expect((await screen.findByTestId("planner-needs-you")).textContent).toContain("The goal has reached its budget.");
+});
 
-  expect(heard).toEqual([]);
-  expect(screen.getByTestId("where").textContent).toBe("/goals/g-1/plan?do=replan");
-  expect(screen.queryByRole("button", { name: "Approve the plan" })).toBeNull();
+test("before the plan is read the panel says it is reading, and a plan being written has no page to open yet", async () => {
+  showPlanning({ plan: null, decision: { state: "drafting", says: "The planner is writing the plan.", buttons: [] } }, { updates: [] });
+  await waitFor(() => expect(screen.getByTestId("planner-headline").textContent).toBe("The planner is writing the plan."));
+  expect(screen.queryByRole("link")).toBeNull();
 });

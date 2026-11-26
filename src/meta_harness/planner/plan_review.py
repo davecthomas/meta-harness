@@ -246,6 +246,17 @@ def _set(goal_id: str, version: int, **fields: Any) -> None:
         )
 
 
+def marked(goal_id: str, plan: dict | None) -> dict | None:
+    """The plan, with `reviewing` set while its adversarial review is running on this version. Nothing about a
+    plan is asked of the operator while a reviewer reads it (actions.actionable): the review may change it."""
+    if plan is None:
+        return None
+    found = rows(goal_id)
+    latest = found[-1] if found else None
+    running = bool(latest and latest["state"] == "running" and latest["version"] == plan.get("version"))
+    return {**plan, "reviewing": running}
+
+
 def current(goal_id: str) -> dict | None:
     """The plan's review as its page shows it: who reviewed, how many rounds, whether one is running, and
     every finding of this run of reviews with its status, merged across rounds. None when there is none."""

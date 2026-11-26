@@ -174,6 +174,11 @@ nothing. They are kept as rules so the same stop does not come back.
   `planner/tracker_progress.py`).
 - **Many stuck tasks take one action.** A goal's page moves each stuck task by
   its recommended step with one button (`planner/unstick_api.py`).
+- **A page says one thing about a plan.** A planning goal's page showed a
+  banner, an update and a plan line that each decided what to say at a
+  different moment, so it asked for an approval while a reviewer was still
+  reading. Where a plan stands, and what it asks, is `actions.plan_decision`
+  alone. A page shows that sentence once and writes no other about the plan.
 
 ### Who speaks
 
@@ -4205,8 +4210,13 @@ covers a plan's gaps. `POST /v1/goals/{id}/plan/review` reviews any plan when
 an operator asks.
 
 **The Plan page** (`console/src/features/plan/`, `planner/plan_view.py`). A
-plan has a page of its own, `/goals/<id>/plan`, and the goal's page links to
-it with the plan's one sentence. The page leads with a decision bar: what the
+plan has a page of its own, `/goals/<id>/plan`. While a goal is planned, the
+planner's panel on the goal's page says the plan's state in that same one
+sentence, read every five seconds, with one button to the plan's page. An
+update's words show under it only when they are about this version of the plan
+and the plan waits to be decided. While a planning task or a reviewer works on
+the plan, nothing about it is asked anywhere: `GET /v1/needs` drops the
+approval too (`plan_review.marked`). The page leads with a decision bar: what the
 plan asks now, in a sentence or two, and its buttons, the recommended one
 first. `actions.plan_decision` decides both from the goal's records, as it
 decides every need, so the page and `GET /v1/needs` cannot disagree. A button

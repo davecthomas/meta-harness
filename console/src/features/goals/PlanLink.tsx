@@ -7,19 +7,33 @@ import { PLAN_CHANGED } from "./needActions";
 
 // The goal's plan, as one line on the goal's page: what it asks now, and the way to its own page, where it is
 // read, changed and approved. The plan lives in one place, and every other page links there.
-export function PlanLink({ goalId }: { goalId: string }) {
+// How often a planning goal's plan is read again while its page is open: the planner and its reviewer move it
+// on without the operator, and the page must say where it stands now.
+export const PLAN_READ_MS = 5000;
+
+// The goal's plan as the planner serves it, with the one thing it asks now (`decision`), read again while the
+// planner works and at once when the plan changes from this page. Null until read, and for a goal not planning.
+export function usePlan(goalId: string, planning = true): Plan | null {
   const [plan, setPlan] = useState<Plan | null>(null);
   useEffect(() => {
+    if (!planning) {
+      setPlan(null);
+      return;
+    }
     const read = () => void api.goalPlan(goalId).then(setPlan, () => setPlan(null));
     read();
-    // Asked again while the planner works, and at once when the plan changes from this page.
-    const timer = window.setInterval(read, 15000);
+    const timer = window.setInterval(read, PLAN_READ_MS);
     window.addEventListener(PLAN_CHANGED, read);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener(PLAN_CHANGED, read);
     };
-  }, [goalId]);
+  }, [goalId, planning]);
+  return plan;
+}
+
+export function PlanLink({ goalId }: { goalId: string }) {
+  const plan = usePlan(goalId);
   const decision = plan?.decision;
   const first = decision?.buttons[0];
   // Named for the decision when there is one, so the button says what pressing through will do.
