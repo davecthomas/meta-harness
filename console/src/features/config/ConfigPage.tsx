@@ -60,9 +60,8 @@ export function ConfigPage() {
       <Tabs value={kind} onChange={(value) => value && setParams({ kind: value })} keepMounted={false}>
         <Tabs.List mb="lg">
           {kinds.map((k) => (
-            <Tabs.Tab key={k.kind} value={k.kind} rightSection={<Badge size="xs" variant="light" circle={false}>v{k.version}</Badge>}>
-              {k.title}
-            </Tabs.Tab>
+            // The tab names the kind alone, so the row fits one line; its version is in the panel under it.
+            <Tabs.Tab key={k.kind} value={k.kind}>{k.title}</Tabs.Tab>
           ))}
         </Tabs.List>
         {kinds.map((k) => (

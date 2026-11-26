@@ -483,7 +483,7 @@ export function NewGoal() {
                 const blocked = s.value === "issues" && trackersRead && !realTrackers.length;
                 return (
                   <UnstyledButton key={s.value} disabled={blocked} onClick={() => chooseSource(s.value)} data-testid={`source-${s.value}`} aria-pressed={source === s.value}>
-                    <Paper withBorder p="md" radius="md" h="100%" style={{ borderColor: source === s.value ? "var(--mantine-primary-color-filled)" : undefined, opacity: blocked ? 0.5 : 1 }}>
+                    <Paper withBorder p="md" radius="md" h="100%" className="mh-choice" data-chosen={source === s.value || undefined} style={{ opacity: blocked ? 0.5 : 1 }}>
                       <Stack gap={6}>
                         <s.icon size={22} />
                         <Text fw={600}>{s.label}</Text>
