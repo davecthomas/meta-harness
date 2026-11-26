@@ -11,7 +11,7 @@ import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview
 import { APPROVE_PLAN, FixFacts, PLAN_CHANGED, REPLAN } from "./PlannerUpdates";
 import { reloadNeeds } from "../overview/needsYou";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { ErrorAlert, SectionTitle, SubTitle, when } from "../../components/ui";
+import { ErrorAlert, ScrollFold, SectionTitle, SubTitle, when } from "../../components/ui";
 
 const CHECKS = /^##\s+acceptance checks\s*$/im;
 const REFRESH_MS = 5000;
@@ -547,6 +547,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
             </div>
           )}
           {embedded ? (
+            <ScrollFold what={drafts.length === 1 ? "the task" : `the ${drafts.length} tasks`}>
             <Stages
               drafts={drafts}
               card={(draft, index) => (
@@ -559,6 +560,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
                 />
               )}
             />
+            </ScrollFold>
           ) : (
             drafts.map((draft, index) => (
               <DraftCard
