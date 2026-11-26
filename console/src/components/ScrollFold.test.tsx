@@ -7,7 +7,7 @@ import { ScrollFold } from "./ui";
 afterEach(cleanup);
 
 test("a long list sits in its own scrolling box, and folds away and back", () => {
-  render(<MantineProvider theme={theme}><ScrollFold what="the 12 tasks"><p>Task one</p></ScrollFold></MantineProvider>);
+  render(<MantineProvider theme={theme}><ScrollFold what="the 12 tasks" count={12}><p>Task one</p></ScrollFold></MantineProvider>);
   const box = screen.getByRole("region", { name: "the 12 tasks" });
   // The box scrolls by itself (styles.css, .mh-scroll), and the keyboard can reach it to scroll.
   expect(box.className).toBe("mh-scroll");
@@ -16,4 +16,11 @@ test("a long list sits in its own scrolling box, and folds away and back", () =>
   expect(fold.getAttribute("aria-expanded")).toBe("true");
   fireEvent.click(fold);
   expect(screen.getByRole("button", { name: "Show the 12 tasks" }).getAttribute("aria-expanded")).toBe("false");
+});
+
+test("a short list shows as it is, with no box and nothing to fold", () => {
+  render(<MantineProvider theme={theme}><ScrollFold what="the 2 tasks" count={2}><p>Task one</p></ScrollFold></MantineProvider>);
+  expect(screen.getByText("Task one")).toBeTruthy();
+  expect(screen.queryByRole("region")).toBeNull();
+  expect(screen.queryByRole("button")).toBeNull();
 });
