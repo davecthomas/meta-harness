@@ -20,6 +20,14 @@ export interface UnsavedChangesOptions {
   ownsQuery?: boolean;
 }
 
+// The editors open now with something unsaved, so a page that would reload itself (NewVersion) waits for them.
+const dirtyEditors = new Set<symbol>();
+
+// Whether any editor on the page holds something unsaved.
+export function anyUnsaved(): boolean {
+  return dirtyEditors.size > 0;
+}
+
 export interface UnsavedChanges {
   // The modal and the route guard: render it once in the editor.
   element: ReactNode;
@@ -35,6 +43,12 @@ export interface UnsavedChanges {
 export function useUnsavedChanges(options: UnsavedChangesOptions): UnsavedChanges {
   const latest = useRef(options);
   latest.current = options;
+  const [self] = useState(() => Symbol("editor"));
+  useEffect(() => {
+    if (options.dirty) dirtyEditors.add(self);
+    else dirtyEditors.delete(self);
+    return () => void dirtyEditors.delete(self);
+  }, [options.dirty, self]);
   const released = useRef(false);
   const [pending, setPending] = useState<{ go: () => void; stay: () => void } | null>(null);
   const [saving, setSaving] = useState(false);
