@@ -196,3 +196,23 @@ test("an ended goal's last update asks for nothing: no need, no button, no next 
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(screen.queryByText(/It will merge once its checks pass/)).toBeNull();
 });
+
+test("an update written before the goal moved is not shown as how things stand", async () => {
+  // The operator has just approved the plan: the update still says it waits for approval.
+  const old = { ...LATEST, headline: "Plan ready, waiting for you to approve.", body: "Approve the plan so work can start.", next: "Both tasks will start running once you approve." };
+  show([{ updates: [old], stale: true, needs: [] }]);
+  expect((await screen.findByTestId("planner-headline")).textContent).toBe("This goal just changed. I'm writing what's new.");
+  const panel = screen.getByTestId("planner-updates").textContent ?? "";
+  expect(panel).not.toContain("waiting for you to approve");
+  expect(panel).not.toContain("Approve the plan so work can start");
+  expect(panel).not.toContain("once you approve");
+});
+
+test("the panel reads again the moment its goal changes", async () => {
+  const { goalChanged } = await import("./goalSync");
+  const fresh = { ...LATEST, headline: "Both tasks are running." };
+  show([{ updates: [LATEST], stale: true }, { updates: [fresh], stale: false }]);
+  await screen.findByTestId("planner-moved");
+  goalChanged("g-1");
+  await waitFor(() => expect(screen.getByTestId("planner-headline").textContent).toBe("Both tasks are running."));
+});
