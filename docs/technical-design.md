@@ -174,7 +174,6 @@ nothing. They are kept as rules so the same stop does not come back.
   `planner/tracker_progress.py`).
 - **Many stuck tasks take one action.** A goal's page moves each stuck task by
   its recommended step with one button (`planner/unstick_api.py`).
-
 - **A page says one thing about a plan.** A planning goal's page showed a
   banner, an update and a plan line that each decided what to say at a
   different moment, so it asked for an approval while a reviewer was still
