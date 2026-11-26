@@ -450,7 +450,7 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
     />
   ) : null;
   return (
-    <Stack gap="xs" data-testid="plan-body">
+    <Stack gap="xs" mb="md" data-testid="plan-body">
       <ErrorAlert error={error} />
       {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} />}
       {plan?.glance && <Glance glance={plan.glance} />}
