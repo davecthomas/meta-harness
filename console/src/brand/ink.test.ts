@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { EMIT_SECONDS, emit, ink, INK_SECONDS, LIFE, look, onBox, PUFFS, seeded, siphon, step } from "./ink";
+import { EMIT_SECONDS, emit, ink, INK_SECONDS, INKS, LIFE, look, onBox, PUFFS, seeded, siphon, step } from "./ink";
 
 // The test page has no canvas to draw on: the cloud still comes and goes, undrawn.
 beforeEach(() => {
@@ -86,4 +86,17 @@ test("with reduced motion on, it does not ink", () => {
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
   expect(ink(1, 1)).toBe(false);
   expect(document.body.querySelector(".splash-ink")).toBeNull();
+});
+
+test("the cloud mixes three inks, each billow one of them, so it reads as ink in water", () => {
+  const puffs = emit(500, 400, 1000, seeded(11));
+  const inks = new Set(puffs.map((p) => p.ink));
+  expect(inks).toEqual(new Set([0, 1, 2]));
+  // Each ink is a real share of the cloud, not a fleck.
+  for (const i of [0, 1, 2]) expect(puffs.filter((p) => p.ink === i).length).toBeGreaterThan(PUFFS * 0.08);
+  // All three are near black, and two of them lean: purple and brown.
+  expect(INKS.every(([r, g, b]) => Math.max(r, g, b) < 45)).toBe(true);
+  const [purple, brown] = INKS;
+  expect(purple[2] > purple[1] && purple[0] > purple[1]).toBe(true);
+  expect(brown[0] > brown[1] && brown[1] > brown[2]).toBe(true);
 });

@@ -10,6 +10,13 @@ export const INK_SECONDS = 18;
 // How long the octopus goes on letting ink out.
 export const EMIT_SECONDS = 3.2;
 export const PUFFS = 320;
+// The ink's colors. Each billow is one of them, so the cloud is made of sub-clouds of different inks that
+// overlap and mix where they meet, as ink in water does. All black, it read as a shadow, not as ink.
+export const INKS: [number, number, number][] = [
+  [20, 7, 30], // a dark purple-black
+  [27, 16, 8], // a dark brown-black
+  [3, 3, 7], // black
+];
 // The ink leaves in billows: a few bursts, each its own way, so the cloud has lobes and is not a disc.
 export const BILLOWS = 11;
 // How long one puff lives, least and most, in seconds: they do not all dissolve at once.
@@ -32,6 +39,8 @@ export interface Puff {
   // Each puff's own size, darkness and phase, so no two move or look alike.
   size: number;
   dark: number;
+  // Which of INKS it is.
+  ink: number;
   phase: number;
 }
 
@@ -53,7 +62,12 @@ export function emit(x: number, y: number, side: number, random: () => number = 
     angle: Math.PI / 2 + (random() - 0.5) * Math.PI * 1.5,
     strength: 0.35 + random() * 0.65,
     at: random() * EMIT_SECONDS * 0.8,
+    ink: Math.floor(random() * INKS.length),
   }));
+  // Every ink is in the cloud: the first billows take one each.
+  billows.forEach((billow, i) => {
+    if (i < INKS.length) billow.ink = i;
+  });
   for (let i = 0; i < PUFFS; i++) {
     const billow = billows[Math.floor(random() * BILLOWS)];
     const angle = billow.angle + (random() - 0.5) * 0.7;
@@ -68,6 +82,7 @@ export function emit(x: number, y: number, side: number, random: () => number = 
       size: 0.45 + random() * random() * 1.6,
       dark: 0.4 + random() * 0.6,
       phase: random() * Math.PI * 2,
+      ink: billow.ink,
     });
   }
   return puffs;
@@ -155,9 +170,10 @@ export function ink(x: number, y: number, into: HTMLElement = document.body): bo
       const cx = p.x * scale, cy = p.y * scale, r = radius * scale;
       // A soft-edged blob: dense in the middle, gone at the rim. Many of them overlapping make the cloud.
       const blob = context.createRadialGradient(cx, cy, 0, cx, cy, r);
-      blob.addColorStop(0, `rgba(2, 2, 6, ${alpha})`);
-      blob.addColorStop(0.6, `rgba(2, 2, 6, ${alpha * 0.6})`);
-      blob.addColorStop(1, "rgba(2, 2, 6, 0)");
+      const [r0, g0, b0] = INKS[p.ink] ?? INKS[2];
+      blob.addColorStop(0, `rgba(${r0}, ${g0}, ${b0}, ${alpha})`);
+      blob.addColorStop(0.6, `rgba(${r0}, ${g0}, ${b0}, ${alpha * 0.6})`);
+      blob.addColorStop(1, `rgba(${r0}, ${g0}, ${b0}, 0)`);
       context.fillStyle = blob;
       context.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
