@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { Badge, MantineProvider, type MantineTheme } from "@mantine/core";
 import { expect, test } from "vitest";
-import { cssVariablesResolver, disabledInputOpacity, textColors, theme } from "./theme";
+import { borderColors, cssVariablesResolver, disabledInputOpacity, textColors, theme } from "./theme";
 
 function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((i) => {
@@ -55,4 +55,18 @@ test("a badge never shrinks below its label, so no table column cuts it short", 
     </MantineProvider>,
   );
   expect(screen.getByTestId("badge").style.minWidth).toBe("max-content");
+});
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`${scheme}: a control's edge meets 3:1 on the page and a card, and the theme serves it`, () => {
+    const vars = cssVariablesResolver(theme as MantineTheme)[scheme];
+    expect(vars["--mh-control-border"]).toBe(borderColors[scheme].control);
+    expect(vars["--mantine-color-default-border"]).toBe(borderColors[scheme].card);
+    for (const bg of [textColors[scheme].page, textColors[scheme].card]) expect(contrast(borderColors[scheme].control, bg)).toBeGreaterThanOrEqual(3);
+  });
+}
+
+test("each heading level is a clear step smaller than the one above it", () => {
+  const sizes = (["h1", "h2", "h3", "h4", "h5", "h6"] as const).map((h) => parseFloat(String(theme.headings?.sizes?.[h]?.fontSize)));
+  for (let i = 1; i < sizes.length; i++) expect(sizes[i - 1] / sizes[i]).toBeGreaterThanOrEqual(1.1);
 });

@@ -1,5 +1,6 @@
-/* Mantine styles everything else. This file holds only what Mantine has no component for: the run
-   terminals, dark in both themes like a shell, and the tile grid that lays them out. */
+/* Mantine styles everything else. This file holds what Mantine has no component for (the run terminals, dark in
+   both themes like a shell, and the tile grid that lays them out) and what a theme prop cannot reach: a state's
+   look, such as the chosen tab. */
 
 .terminal {
   background: #0d1117; color: #d6dde8;
@@ -50,4 +51,32 @@
   .mh-spin {
     animation: none;
   }
+}
+
+/* Controls show where they start and end (theme.ts, borderColors.control). A default button, a checkbox and a
+   segmented control take the same edge as an input. */
+.mantine-Button-root[data-variant="default"],
+.mantine-Checkbox-input,
+.mantine-Radio-radio,
+.mantine-SegmentedControl-root {
+  border-color: var(--mh-control-border);
+}
+.mantine-SegmentedControl-root { border-width: 1px; border-style: solid; }
+
+/* Tabs: each tab is boxed, a little shaded until it is chosen; the chosen one is heavier and joins its panel. */
+.mantine-Tabs-list[data-variant="outline"] { gap: 4px; --tab-border-color: var(--mh-control-border); }
+.mantine-Tabs-tab[data-variant="outline"] {
+  font-weight: 500;
+  font-size: var(--mantine-font-size-sm);
+  padding: 10px 16px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-bottom-color: transparent;
+  background: var(--mantine-color-default-hover);
+}
+.mantine-Tabs-tab[data-variant="outline"]:hover { background: var(--mantine-color-default); }
+.mantine-Tabs-tab[data-variant="outline"][data-active] {
+  font-weight: 650;
+  background: var(--mantine-color-body);
+  border-color: var(--mh-control-border);
+  border-bottom-color: var(--mantine-color-body);
 }
