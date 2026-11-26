@@ -4222,10 +4222,11 @@ the plan, nothing about it is asked anywhere: `GET /v1/needs` drops the
 approval too (`plan_review.marked`). The page leads with a decision bar: what the
 plan asks now, in a sentence or two, and its buttons, the recommended one
 first. `actions.plan_decision` decides both from the goal's records, as it
-decides every need, so the page and `GET /v1/needs` cannot disagree. A button
-that spends says the most it may spend. When a plan may need more than the
-goal's budget, the sentence says so, Approve names the budget, and raising the
-budget is the next button. Under the bar are the plan's figures as tiles
+decides every need, so the page and `GET /v1/needs` cannot disagree. The
+sentence says the most the plan's tasks may spend. Approve names no amount: a
+figure on it read as the goal's limit. Plan again says the most one planning
+run may spend. When a plan may need more than the goal's budget, the sentence
+says so and raising the budget is the next button. Under the bar are the plan's figures as tiles
 (`plan_view.glance`): tasks, repos, the most it may spend, how many tasks can
 start at once, and open questions. The most a plan may spend is each task's
 spend limit for its size, summed. The plan keeps each task's size for this

@@ -205,19 +205,13 @@ def plan_decision(
         first = str(still[0].get("says") or "").strip()
         if n == 1 and first and len(says) + len(first) < 270:
             says += f" {first}"
-        cap = None
-        if spend is not None and float(spend) > 0:
-            budget = figures.get("budget_usd")
-            cap = budget if budget is not None and float(spend) > float(budget) else spend
         return {
             "state": "ready",
             "says": says,
             "buttons": [
                 {"action": "fix_findings", "label": f"{'Fix it' if n == 1 else f'Fix all {n}'}{again}"},
-                {
-                    "action": "approve_plan",
-                    "label": f"Approve with {n} open" + (f" (up to {_usd(cap)})" if cap is not None else ""),
-                },
+                # The sentence says what the plan may spend; an amount on the button read as the goal's limit.
+                {"action": "approve_plan", "label": f"Approve with {n} open"},
             ],
         }
     says = f"{_count(tasks, 'task')} in {_count(repos, 'repo')}." if repos else f"{_count(tasks, 'task')}."
@@ -229,12 +223,10 @@ def plan_decision(
             # A budget is a hard cap: the plan may need more than the goal can spend. The operator should know
             # before approving that work stops there, and the button names what approving can spend, the budget.
             says += f" All of them may need up to {_usd(spend)}, and your {_usd(budget)} budget stops work before that."
-            approve += f" (up to {_usd(budget)})"
             buttons = [{"action": "raise_budget", "label": "Raise the budget"}, replan]
         else:
             of_budget = f" of your {_usd(budget)} budget" if budget is not None else ""
             says += f" Running them may spend up to {_usd(spend)}{of_budget}."
-            approve += f" (up to {_usd(spend)})"
     return {
         "state": "ready",
         "says": says,

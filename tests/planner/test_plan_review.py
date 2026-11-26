@@ -260,7 +260,7 @@ def test_the_decision_for_an_open_finding_fits_the_bar():
     )
 
     assert found["says"] == "The review found 3 problems, and 1 is still open.", "a long finding stays on its card"
-    assert found["buttons"][1]["label"] == "Approve with 1 open (up to $9)"
+    assert found["buttons"][1]["label"] == "Approve with 1 open"
 
 
 def test_a_plan_is_marked_while_its_review_runs_so_nothing_asks_for_its_approval(monkeypatch):

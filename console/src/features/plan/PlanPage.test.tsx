@@ -16,7 +16,7 @@ const shown = (ui: React.ReactNode) => render(<MantineProvider theme={theme}><Me
 const READY: PlanAsk = {
   state: "ready",
   says: "44 tasks in 1 repo. Running them may spend up to $62 of your $100 budget.",
-  buttons: [{ action: "approve_plan", label: "Approve and start (up to $62)" }, { action: "replan", label: "Plan again (up to $4)" }],
+  buttons: [{ action: "approve_plan", label: "Approve and start" }, { action: "replan", label: "Plan again (up to $4)" }],
 };
 
 test("the decision bar says what is asked and offers its buttons, the recommended one first", () => {
@@ -26,8 +26,8 @@ test("the decision bar says what is asked and offers its buttons, the recommende
   const bar = screen.getByTestId("plan-decision");
   expect(within(bar).getByTestId("plan-decision-says").textContent).toBe(READY.says);
   const buttons = within(bar).getAllByRole("button").map((b) => b.textContent);
-  expect(buttons).toEqual(["Approve and start (up to $62)", "Plan again (up to $4)"]);
-  fireEvent.click(within(bar).getByRole("button", { name: "Approve and start (up to $62)" }));
+  expect(buttons).toEqual(["Approve and start", "Plan again (up to $4)"]);
+  fireEvent.click(within(bar).getByRole("button", { name: "Approve and start" }));
   expect(acted).toEqual(["approve_plan"]);
 });
 
