@@ -479,6 +479,14 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
       )}
       {plan && (
         <Stack gap="md">
+          {embedded ? (
+            // On the plan itself the decision bar and the figures say where it stands: one quiet line names
+            // the version and leads to the run that planned it.
+            <Group gap="xs" data-testid="plan-version-line">
+              <Text size="xs" c="dimmed">Version {plan.version} · {when(plan.created_at)}</Text>
+              {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="xs">The planning run</Anchor>}
+            </Group>
+          ) : (
           <Group gap="sm">
             <Text size="sm">
               {plannedIn(plan, shown.planning_asked_at, drafting, now)}Version {plan.version}, {plan.source === "planned" ? "made by the planner" : plan.source === "suggested" ? (plan.created_by === "planner" ? "with the planner's own fix" : `the planner's fix, accepted by ${plan.created_by}`) : `edited by ${plan.created_by}`}, {when(plan.created_at)}.
@@ -486,6 +494,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
             </Text>
             {plan.task_id && <Anchor component={Link} to={`/tasks/${plan.task_id}`} size="sm">The planning task's run</Anchor>}
           </Group>
+          )}
           {shown.applied_fix && !dirty && !embedded && (
             <Alert color="blue" variant="light" title={`The planner fixed ${shown.applied_fix.fixes.length === 1 ? "a gap" : `${shown.applied_fix.fixes.length} gaps`} in its plan`} data-testid="plan-applied-fix">
               <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">

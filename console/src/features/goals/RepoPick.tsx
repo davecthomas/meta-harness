@@ -1,4 +1,4 @@
-import { Anchor, Checkbox, MultiSelect, Stack, Text } from "@mantine/core";
+import { Anchor, Checkbox, Group, Loader, MultiSelect, Stack, Text } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { ConnectButton } from "../github/GitHubConnect";
 
@@ -25,6 +25,15 @@ export function RepoPick({
   required?: boolean;
 }) {
   const names = [...new Set([...(offered ?? []), ...value])];
+  // Reading the repos can take a few seconds the first time: the field says so, where it will be.
+  if (offered === null && names.length === 0) {
+    return (
+      <Stack gap={6} data-testid="repos-reading">
+        <Text size="sm" fw={600}>{label ?? "Repositories"}</Text>
+        <Group gap="xs"><Loader size="xs" /><Text size="sm" c="dimmed">Reading the repos you can reach.</Text></Group>
+      </Stack>
+    );
+  }
   if (offered !== null && names.length === 0) {
     return (
       <Stack gap={6} data-testid="no-repos">
@@ -57,6 +66,8 @@ export function RepoPick({
       onChange={onChange}
       searchable
       clearable
+      // Enter picks the closest match, so a typed name is taken without reaching for the mouse.
+      selectFirstOptionOnChange
       placeholder={value.length ? undefined : "Type to find a repo"}
       nothingFoundMessage="No repo you can push to has that name. Pick which GitHub accounts Muxxy uses in Settings."
       limit={50}
