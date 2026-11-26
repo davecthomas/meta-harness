@@ -1,5 +1,5 @@
 import { spanWords } from "../tasks/path";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Alert, Anchor, Badge, Button, Card, Code, Collapse, Group, List, Loader, Modal, Paper, Select, Stack, Switch, TagsInput, Text, TextInput, Textarea, UnstyledButton } from "@mantine/core";
 import { IconCheck, IconChevronDown, IconChevronRight, IconEdit, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
@@ -367,8 +367,11 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
       if (running) return void load();
       setWatching(false);
       setError(err instanceof Error ? err.message : String(err));
+      // The refusal is said in the approval's dialog, which offers it again.
+      setAsking("approve");
     }
   }
+  const approveNow = (tracked: boolean) => approve(tracked);
 
   async function run(action: () => Promise<Plan>, after?: () => void): Promise<boolean> {
     setBusy(true);
@@ -404,8 +407,17 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
 
   // "Approve the plan" in the planner's panel opens this plan's approval, where its counts are said first,
   // and its "Plan again" opens this plan's; a fix accepted there makes a new version, read here at once.
+  // The decision bar's Approve approves at once: its box already says what approving does, and holds the
+  // tracker choice, which the event carries. A second "Approve and start" in a dialog asked the same twice.
+  const ready = useRef<{ can: boolean; untracked: boolean; track: boolean }>({ can: false, untracked: false, track: true });
   useEffect(() => {
-    const approve = () => setAsking("approve");
+    const approve = (event: Event) => {
+      const asked = (event as CustomEvent<{ track?: boolean } | undefined>).detail;
+      const now = ready.current;
+      // Not ready (still planning, unsaved changes, not valid): the dialog says why, and approves nothing.
+      if (!now.can) return setAsking("approve");
+      void approveNow(now.untracked ? false : asked?.track ?? now.track);
+    };
     const replan = () => setAsking("replan");
     const changed = () => void load();
     window.addEventListener(APPROVE_PLAN, approve);
@@ -443,6 +455,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
   // A goal with no tracker keeps every task in the meta-harness: there is nowhere else to put them.
   const untracked = (goal.tracker ?? "github") === OWN;
   const tracker = trackerTitle(goal.tracker ?? "github");
+  ready.current = { can: canApprove, untracked, track };
 
   return (
     <>
@@ -621,7 +634,8 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
           <Text size="sm" c="dimmed">Writing and checking each task takes a few minutes. You can leave this page; nothing else needs you.</Text>
         </Stack>
       </Modal>
-      <Modal opened={asking === "approve" && !approving && canApprove} onClose={() => setAsking(null)} title="Approve the plan" size="lg">
+      {/* Only for the main goal page's own Approve, or after a refusal: the decision bar approves at once. */}
+      <Modal opened={asking === "approve" && !approving && canApprove} onClose={() => setAsking(null)} title={error ? "The plan was not approved" : "Approve the plan"} size="lg">
         <Stack gap="md">
           <Text size="sm" data-testid="approve-says">
             {planSentence(base, items)} Then the goal starts: each task runs to a pull request, in the order shown.

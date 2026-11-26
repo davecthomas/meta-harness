@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Alert, Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, SimpleGrid, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanAsk, type PlanFinding, type PlanGlance, type PlanVersion } from "../../api";
@@ -7,6 +7,7 @@ import { ApprovedPlan, GoalPlan } from "../goals/GoalPlan";
 import { APPROVE_PLAN, FixFacts, PLAN_CHANGED, REPLAN } from "../goals/PlannerUpdates";
 import { EVENT_BY_DO } from "../goals/needActions";
 import { reloadNeeds } from "../overview/needsYou";
+import { OWN, trackerTitle } from "../trackers/refs";
 import { useGoalChanged, useGoalStream } from "../goals/goalSync";
 
 // The plan's page. A plan is what the operator decides on before any work starts, so it has a page of its own,
@@ -47,10 +48,10 @@ const dollars = (amount: string | null | undefined): string => {
 // The one thing the plan asks now, in a sentence or two, beside the buttons that answer it: the first is the
 // recommended one. The service decides what it says and offers; this draws it. It stays in view as the page
 // scrolls, so the decision is never more than a glance away.
-export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[] }) {
+export function DecisionBar({ decision, onAct, busy, gaps = [], extra }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[]; extra?: ReactNode }) {
   const working = decision.state === "drafting" || decision.state === "improving";
   const weigh = decision.buttons.length > 0 ? gaps : [];
-  const weighFirst = weigh.length > 0;
+  const weighFirst = weigh.length > 0 || !!extra;
   const buttons = (
     <Group gap="xs">
       {decision.buttons.map((button, i) => (
@@ -83,7 +84,8 @@ export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: Pl
       ) : (
         <Stack gap="sm">
           {says}
-          <OpenQuestions gaps={weigh} />
+          {weigh.length > 0 && <OpenQuestions gaps={weigh} />}
+          {extra}
           <Group justify="flex-end">{buttons}</Group>
         </Stack>
       )}
@@ -292,8 +294,8 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
                 disabled={busy}
                 onChange={(event) => void run(() => api.setPlanReview(goal.id, event.currentTarget.checked))}
               />
-              {review?.state !== "running" && (review?.state === "canceled" || review?.version !== plan.plan?.version) && (
-                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>{review?.state === "canceled" ? (plan.review_usd ? `Review again (up to $${plan.review_usd})` : "Review again") : plan.review_usd ? `Review this plan (up to $${plan.review_usd})` : "Review this plan"}</Button>
+              {review?.state !== "running" && (review?.version !== plan.plan?.version || review?.state === "failed" || review?.state === "canceled") && (
+                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>{`${review?.version === plan.plan?.version ? "Review again" : "Review this plan"}${plan.review_usd ? ` (up to $${plan.review_usd})` : ""}`}</Button>
               )}
             </Group>
           )
@@ -392,6 +394,10 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [track, setTrack] = useState(true);
+  useEffect(() => {
+    api.limits().then((l) => setTrack(l.track_new_tasks !== false), () => undefined);
+  }, []);
   const shown = useCallback((found: Plan | null) => {
     setPlan(found);
     onShown?.(found);
@@ -420,9 +426,23 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
     return () => window.clearTimeout(timer);
   }, [asked, ready, setSearch]);
 
+  const reviewAgainNow = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.reviewPlan(goalId);
+      window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : String(err)}. Press Review again to try once more.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const act = async (action: PlanAsk["buttons"][number]["action"]) => {
     // Approving and planning again open the plan section's own dialogs, which say what each will do first.
-    if (action === "approve_plan") return void window.dispatchEvent(new CustomEvent(APPROVE_PLAN));
+    // Approving starts at once (GoalPlan.tsx), with the tracker choice made in this box.
+    if (action === "approve_plan") return void window.dispatchEvent(new CustomEvent(APPROVE_PLAN, { detail: { track } }));
     if (action === "replan") return void window.dispatchEvent(new CustomEvent(REPLAN));
     // The budget is the goal's setting, changed on the goal's page, which opens it on arrival.
     if (action === "raise_budget") return void navigate(`/goals/${goalId}?do=budget`);
@@ -441,6 +461,19 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
 
   const planning = goal.status === "planning";
   const decision = plan?.decision;
+  // Whether the plan's new tasks go to the goal's tracker: chosen in the decision box, over Approve, since it
+  // is part of what approving does. Its default is the deployment's (Configuration, Planning).
+  const newTasks = plan?.plan?.drafts?.length ?? 0;
+  const tracked = (goal.tracker ?? "github") !== OWN;
+  const approving = !!decision?.buttons.some((b) => b.action === "approve_plan");
+  const trackChoice = planning && approving && tracked && newTasks > 0 ? (
+    <Switch
+      data-testid="approve-track"
+      checked={track}
+      onChange={(event) => setTrack(event.currentTarget.checked)}
+      label={`Add the ${newTasks === 1 ? "new task" : `${newTasks} new tasks`} to ${trackerTitle(goal.tracker ?? "github")} as ${newTasks === 1 ? "an issue" : "issues"}`}
+    />
+  ) : undefined;
   const reviewFirst = plan?.review?.state === "running" || (plan?.review?.counts.open ?? 0) > 0;
   const review = plan?.plan ? (
     <ReviewPart
@@ -453,10 +486,25 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
       }}
     />
   ) : null;
+  // A review the goal asked for that did not finish is part of the decision: said in its box, over Approve,
+  // with the button that runs it again.
+  const latestReview = plan?.review;
+  const reviewFailed = planning && approving && !!latestReview && latestReview.version === plan?.plan?.version && (latestReview.state === "failed" || latestReview.state === "canceled");
+  const reviewAgain = reviewFailed ? (
+    <Alert color="yellow" variant="light" p="sm" data-testid="plan-review-failed">
+      <Group justify="space-between" wrap="wrap" gap="sm">
+        <Text size="sm">The review by {latestReview?.model} did not finish, so it says nothing about this plan.</Text>
+        <Button size="xs" variant="default" disabled={busy} onClick={() => void reviewAgainNow()}>
+          {`Review again${plan?.review_usd ? ` (up to $${plan.review_usd})` : ""}`}
+        </Button>
+      </Group>
+    </Alert>
+  ) : null;
+  const inBox = reviewAgain || trackChoice ? <Stack gap="sm">{reviewAgain}{trackChoice}</Stack> : undefined;
   return (
     <Stack gap="xs" mb="md" data-testid="plan-body">
       <ErrorAlert error={error} />
-      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} />}
+      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} extra={inBox} />}
       {plan?.glance && <Glance glance={plan.glance} />}
       {/* A review that still asks something (it is running, or left a problem open) comes before the tasks.
           One that is done and settled comes after them: the tasks are what the operator reads to decide. */}
