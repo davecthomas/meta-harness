@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import symbol from "./octopus.svg?raw";
 import wordmark from "./wordmark.svg?raw";
+import { ink, onBox } from "./ink";
 import tagline from "./tagline.svg?raw";
 import { createOctopus, energyAt, FLAIL_SECONDS } from "./octopus";
 import { createEyes } from "./eyes";
@@ -45,7 +46,8 @@ function reducedMotion(): boolean {
 }
 
 // The octopus, alive: its arms flail, then settle into a slow sway, as the name comes out of them and the
-// tagline rolls out from under the name. Its eyes follow the pointer, and a click near it gets a swipe of an arm.
+// tagline rolls out from under the name. Its eyes follow the pointer, a click near it gets a swipe of an arm, and
+// a click right on it makes it ink, a black cloud over the screen that fades (ink.ts).
 // It plays in full every time the screen it is on opens: a splash that
 // played once in a session and then sat still read as broken. With the system's reduced-motion setting on,
 // nothing moves. It draws only while it is on screen and its tab is showing. `where` names the screen.
@@ -77,6 +79,11 @@ export function Splash({ where }: { where: string }) {
     const poke = (event: PointerEvent) => {
       const box = svg.getBoundingClientRect();
       if (!box.width || !nearBox(box, event.clientX, event.clientY)) return;
+      // Right on it, it inks; near it, it swipes an arm at the click.
+      if (onBox(box, event.clientX, event.clientY)) {
+        ink(event.clientX, event.clientY);
+        return;
+      }
       const unit = 1418 / box.width;
       eyes.look(event.clientX, event.clientY);
       octopus.swipe((event.clientX - box.left) * unit, (event.clientY - box.top) * unit, (performance.now() - began) / 1000);
