@@ -14,7 +14,7 @@ export function DeploysPage() {
   }, []);
   return (
     <>
-      <PageHeader title="Deploys" description="Every merge to main deploys itself: the platform stack when it changed, then the VM and the edge at the merged commit." />
+      <PageHeader title="Deploys" />
       <ErrorAlert error={error} />
       {deployed && (
         <Facts
@@ -41,7 +41,7 @@ export function AuditPage() {
   }, []);
   return (
     <>
-      <PageHeader title="Audit" description="What people changed, and every decision Muxxy made about its work, newest first." />
+      <PageHeader title="Audit" />
       <Tabs value={view} onChange={(v) => setView(v ?? "changes")} mb="md">
         <Tabs.List>
           <Tabs.Tab value="changes">Changes by people</Tabs.Tab>

@@ -38,7 +38,7 @@ export function GoalTrackerFields(props: {
       {props.settingsOnly ? null : props.trackers.length > 1 ? (
         <NativeSelect
           label="Issue tracker"
-          description="Where the goal's issues are. A goal uses one tracker for all its issues, and keeps it."
+          description="A goal keeps the tracker it starts with."
           value={props.tracker}
           onChange={(e) => props.onTracker(e.currentTarget.value)}
           data={props.trackers.map((t) => ({ value: t.scheme, label: t.signed_in ? t.title : `${t.title} (not signed in)` }))}

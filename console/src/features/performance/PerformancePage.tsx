@@ -169,7 +169,7 @@ export function PerformancePage() {
 
   return (
     <>
-      <PageHeader title="Performance" description="What the work costs: per task, per pull request and per goal, over time, and where the money goes." />
+      <PageHeader title="Performance" />
       <ErrorAlert error={error} />
       {own && (
         <Alert color="blue" mb="md" data-testid="own-scope">

@@ -76,7 +76,7 @@ export function GitHubSection() {
   return (
     <Paper p="md" withBorder maw={720} mb="lg" data-testid="github-section">
       <Title order={4} mb="sm">GitHub</Title>
-      <Text size="sm" c="dimmed" mb="md">Connect your GitHub account once. A goal you create can then work in any repo you can push to, with no setup for each repo.</Text>
+      <Text size="sm" c="dimmed" mb="md">A goal you create works in any repo you can push to.</Text>
       <ErrorAlert error={error} />
       {!found && !error && <Loader size="sm" />}
       {found && !found.enabled && <Alert color="gray" variant="light">{found.why_off}</Alert>}

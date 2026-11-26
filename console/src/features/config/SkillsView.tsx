@@ -114,7 +114,7 @@ function GitSource({ url, gitRef: ref, path, repos, refs, paths, onUrl, onRef, o
   const at = ref || refs.fallback || "the default branch";
   return (
     <Stack gap="sm">
-      <Labeled label="Repository" description="A registered repository. The planner reads it as it is now; later changes there change nothing here.">
+      <Labeled label="Repository" description="Later changes there change nothing here.">
         <PickedName label="Repository" what="repository" where="The registry" value={url} empty={loading(repos) ? "Loading…" : "Pick a repository"} known={repos.known} unreadable={repos.error} testId="skill-repo-unknown" strict readOnly={loading(repos)} onCommit={onUrl} />
         <Unreadable what="registered repositories" error={repos.error} />
       </Labeled>

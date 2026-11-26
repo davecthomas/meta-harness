@@ -1,6 +1,6 @@
 import { GitHubSection } from "../github/GitHubConnect";
 import { useEffect, useRef, useState } from "react";
-import { Paper, Text, Title, useMantineColorScheme } from "@mantine/core";
+import { Paper, Title, useMantineColorScheme } from "@mantine/core";
 import { api, type UserSettings } from "../../api";
 import { InlineField } from "../../components/InlineField";
 import { AutonomyPicker, autonomyOf } from "../goals/autonomy";
@@ -60,12 +60,11 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" description="Yours alone: they follow you to any browser you sign in on. Each saves as you change it." />
+      <PageHeader title="Settings" />
       <ErrorAlert error={error} />
       <GitHubSection />
       <Paper p="md" withBorder maw={720} mb="lg">
         <Title order={4} mb="sm">New goal defaults</Title>
-        <Text size="sm" c="dimmed" mb="md">The New goal form starts from these. Each goal can still say otherwise.</Text>
         <Facts
           items={[
             ["Repositories", <InlineField kind="checkboxes" label="Repositories" value={planner.repos} data={repos} empty="No repository is registered yet: an admin adds one under Configuration, Repositories" showSaved onCommit={(v) => savePlanner({ repos: v })} />],
@@ -121,7 +120,6 @@ export function SettingsPage() {
             ],
           ]}
         />
-        <Text size="sm" c="dimmed" mt="xs">The browser asks once to allow notifications.</Text>
       </Paper>
     </>
   );

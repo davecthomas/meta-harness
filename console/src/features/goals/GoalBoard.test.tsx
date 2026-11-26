@@ -85,7 +85,7 @@ test("the graph draws the order of work, says each issue's standing in words, an
   renderIn(<GoalGraph issues={ISSUES} tasks={{}} />);
   expect(screen.getByTestId("node-github:o/r#4").getAttribute("data-column")).toBe("done");
   expect(screen.getByTestId("node-github:o/r#6").getAttribute("data-column")).toBe("attention");
-  expect(screen.getByTestId("graph-legend").textContent).toContain("Work runs left to right");
+  expect(screen.getByTestId("graph-legend").textContent).toContain("An arrow points from an issue to one that waits on it.");
   expect(screen.getByTestId("node-github:o/r#4").textContent).toContain("Done");
 });
 

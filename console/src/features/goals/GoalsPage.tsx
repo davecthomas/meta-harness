@@ -34,7 +34,6 @@ export function GoalsPage() {
     <>
       <PageHeader
         title="Goals"
-        description="Each goal runs its issues as tasks, from issues that exist or from a plan."
         actions={<Button component={Link} to="/goals/new" leftSection={<IconPlus size={16} />}>New goal</Button>}
       />
       <Group mb="md" justify="space-between">

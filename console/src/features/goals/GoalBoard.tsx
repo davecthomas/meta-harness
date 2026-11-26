@@ -319,7 +319,7 @@ export function GoalGraph(props: { issues: IssueProgress[]; tasks: Record<string
   return (
     <Stack gap="xs" mb="lg">
       <Group gap="lg" data-testid="graph-legend">
-        <Text size="sm" c="dimmed">Work runs left to right: an arrow points from an issue to one that waits on it. Click an issue to open its task.</Text>
+        <Text size="sm" c="dimmed">An arrow points from an issue to one that waits on it.</Text>
         <Group gap={6}><Badge size="xs" color="red" variant="outline">red</Badge><Text size="xs" c="dimmed">needs you, or is stuck behind one that does</Text></Group>
         <Group gap={6}><Badge size="xs" color="teal" variant="outline">green</Badge><Text size="xs" c="dimmed">done</Text></Group>
       </Group>

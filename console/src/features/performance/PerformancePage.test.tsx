@@ -88,7 +88,7 @@ test("the axis steps are round, a range ends today, and a series keeps its color
 
 test("the page says what the work costs, under the old name nowhere", async () => {
   show(COSTS);
-  expect(await screen.findByText("What the work costs: per task, per pull request and per goal, over time, and where the money goes.")).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Performance" })).toBeTruthy();
   expect(document.body.textContent).not.toMatch(/meta-harness/i);
 });
 
