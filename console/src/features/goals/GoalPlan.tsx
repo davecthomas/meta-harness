@@ -547,7 +547,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
             </div>
           )}
           {embedded ? (
-            <ScrollFold what={drafts.length === 1 ? "the task" : `the ${drafts.length} tasks`}>
+            <ScrollFold count={drafts.length} what={`the ${drafts.length} tasks`}>
             <Stages
               drafts={drafts}
               card={(draft, index) => (

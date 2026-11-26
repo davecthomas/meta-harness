@@ -89,5 +89,6 @@ button:not(:disabled):hover > .mh-choice { background: var(--mantine-color-defau
 button:focus-visible > .mh-choice { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 2px; }
 
 /* A long list in a box of its own (ui.tsx, ScrollFold): it scrolls inside, so the page under it stays near. */
-.mh-scroll { max-height: min(62vh, 640px); overflow-y: auto; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-sm); }
+/* No border of its own: what it holds is already boxed, and a box in a box in a box reads as clutter. */
+.mh-scroll { max-height: min(62vh, 640px); overflow-y: auto; padding-right: 6px; }
 .mh-scroll:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 2px; }

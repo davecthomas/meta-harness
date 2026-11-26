@@ -57,8 +57,8 @@ function Refreshed({ at, error }: { at: number | null; error: string | null }) {
 const REFRESH_FAILED = "The goal could not be refreshed";
 
 // The goal's issues in a box that scrolls and folds once there are some; an empty goal's one line needs no box.
-function ListBox({ fold, what, children }: { fold: boolean; what: string; children: ReactNode }) {
-  return fold ? <ScrollFold what={what}>{children}</ScrollFold> : <>{children}</>;
+function ListBox({ count, children }: { count: number; children: ReactNode }) {
+  return <ScrollFold count={count} what={`the ${count} issues`}>{children}</ScrollFold>;
 }
 
 export function GoalPage() {
@@ -513,7 +513,7 @@ export function GoalPage() {
       {progress && <GoalFailures issues={progress} tasks={tasks} ended={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
-      <ListBox fold={issues.length > 0} what={issues.length === 1 ? "the issue" : `the ${issues.length} issues`}>
+      <ListBox count={issues.length}>
       {issues.length > 0 && progress && shownView === "board" ? (
         <GoalBoard
           issues={progress}

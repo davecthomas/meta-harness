@@ -32,8 +32,12 @@ export function SectionTitle(props: { children: ReactNode; right?: ReactNode }) 
 
 // A long list in a box of its own: it scrolls inside the box, and folds away, so what comes after it on the
 // page is not pushed out of reach. what: the list's name, as the fold says it ("the 12 tasks").
-export function ScrollFold({ what, children }: { what: string; children: ReactNode }) {
+// A list of FOLD_FROM items or fewer is short enough to show as it is, with no box round it.
+export const FOLD_FROM = 4;
+
+export function ScrollFold({ what, count, children }: { what: string; count: number; children: ReactNode }) {
   const [folded, setFolded] = useState(false);
+  if (count < FOLD_FROM) return <>{children}</>;
   return (
     <div data-testid="scroll-fold">
       <Anchor component="button" type="button" size="sm" mb={6} onClick={() => setFolded((now) => !now)} aria-expanded={!folded}>

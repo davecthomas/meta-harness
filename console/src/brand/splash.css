@@ -47,6 +47,6 @@
 }
 
 /* The octopus's ink (ink.ts): a canvas over the whole screen that the cloud is drawn on. It never takes a
-   click. The octopus and its name are lifted over it while it is out, so the ink comes from behind him. */
+   click. The ink is over the octopus, which it is there to hide; only the name is lifted over it. */
 .splash-ink { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 400; pointer-events: none; }
-.splash-inking .splash-sea, .splash-inking .splash-name { z-index: 401; }
+.splash-inking .splash-name { z-index: 401; }
