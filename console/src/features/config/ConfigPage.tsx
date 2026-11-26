@@ -226,7 +226,6 @@ function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary;
       <Paper mb="lg" p="md">
         <Group justify="space-between" wrap="wrap" gap="md">
           <Stack gap={2} style={{ flex: "1 1 360px" }}>
-            <Text c="dimmed" size="sm">{summary.description}</Text>
             <Text size="sm">
               Version {current.version} · {current.origin === "seed" ? "from the deployment's file" : `saved by ${current.edited_by}`} · {when(current.created_at)}
               {current.note && current.origin !== "seed" ? ` · ${current.note}` : ""}

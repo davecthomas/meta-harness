@@ -51,7 +51,7 @@ export function TrackersView({ staging: s }: { staging: Staging }) {
             onCommit={(v) => stageOptional(s, ["label"], v.trim())}
           />
           <Text size="sm" c="dimmed">
-            Every issue Muxxy creates, comments on or moves gets this label, in every tracker, so its work can be told apart and listed. No spaces. Empty: ai:meta-harness.
+            Put on every issue Muxxy creates or changes. No spaces. Empty: ai:meta-harness.
           </Text>
         </Stack>
       </Paper>
