@@ -105,8 +105,11 @@ test("picking accounts saves them, and the count follows", async () => {
   show(<GitHubSection />);
   const box = (await screen.findByTestId("github-owners")).querySelector("input:not([type=hidden])") as HTMLElement;
   await waitFor(() => expect(screen.getByTestId("github-owners").textContent).toContain("Muxxy offers 15 repos"));
+  expect(screen.getByTestId("github-owners-saved").textContent).toBe("Each change saves as you make it.");
   fireEvent.click(box);
   fireEvent.click(await screen.findByRole("option", { name: "octo-dave (3)", hidden: true }));
   await waitFor(() => expect(sent).toEqual(['{"owners":["octo-dave"]}']));
+  // The change says it went through: there is no Save button to look for.
+  await waitFor(() => expect(screen.getByTestId("github-owners-saved").textContent).toBe("Saved"));
   await waitFor(() => expect(screen.getByTestId("github-owners").textContent).toContain("Muxxy offers 3 repos"));
 });

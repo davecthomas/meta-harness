@@ -4148,7 +4148,9 @@ limit Muxxy to some of the accounts and organizations their connection reaches
 (`PUT /v1/github/connection/owners`, picked in Settings from the list the
 connection returns). The reachable list then holds only those accounts' repos,
 and still names every account so the choice can change. With none picked, all
-count. 
+count. Settings asks for the accounts alone (`?repos=0`). The planner
+keeps the accounts each read found (`github_connection.reached`), answers from
+them at once, and reads the repos again behind the answer. 
 A goal acts as the operator who created it, when that operator had connected
 GitHub (`goal.acts_as`). Its clones, pushes, pull requests, reviews, checks and
 merges then use the operator's token, so the operator's GitHub account authors
