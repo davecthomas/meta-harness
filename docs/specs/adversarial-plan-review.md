@@ -441,8 +441,8 @@ above, the code is right:
 | A new profile, `pi-plan-review` | The pull request reviewers' profile. Reviewers come from `planning.adversarial_review.reviewers`, else the task policy's `review.reviewers` |
 | The skill loaded by the profile | The skill's text put in the review's prompt by the planner, which is what a locked skill is for |
 | `settle_plan_review` as a need | The plan's decision holds it: "Fix it" and "Approve with N open" on the Plan page. The needs list still shows the plan's approval |
-| "Approve now" cancels a running review | Not built: approving while a review runs leaves the review to end |
-| An edit cancels a running review | Not built: the review ends and stays on the version it read |
+| A canceled review's findings marked partial | They are kept as recorded, and the review's state reads `canceled` |
+| Planning again makes a proposal, reviewed once accepted | Planning again leaves a running review alone, and the planner reviews the new version once it saves it |
 | Findings as the planner redesign's reasons | Kept in `planner.plan_review`, drawn in their own part of the Plan page |
 | A setting in Settings for the operator's default | Not built: the default follows the goal's autonomy |
 

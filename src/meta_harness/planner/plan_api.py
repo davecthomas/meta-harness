@@ -1,9 +1,9 @@
 """The plan routes of the planner's API: read a feature goal's plan, edit it, ask for a new one, approve it.
 
     GET  /v1/goals/{id}/plan      the newest plan version, and the planning task in flight if there is one
-    PUT  /v1/goals/{id}/plan      save edited drafts as the next version
-    POST /v1/goals/{id}/replan    start a new planning task, with a note
-    POST /v1/goals/{id}/approve   create the plan's issues and make the goal active
+    PUT  /v1/goals/{id}/plan      save edited drafts as the next version, and cancel a running review
+    POST /v1/goals/{id}/replan    start a new planning task, with a note; a running review goes on
+    POST /v1/goals/{id}/approve   cancel a running review, create the plan's issues and make the goal active
     POST /v1/goals/enrich, /v1/goals/{id}/enrich/accept   a richer statement, and saving it (enrich.py)
 
 Registered by the planner service's create_app, which hands over what the routes share with the rest.
@@ -136,6 +136,16 @@ def register(
             raise HTTPException(status_code=409, detail=f"a {goal['status']} goal has no plan to change")
         return goal
 
+    def stop_review(goal_id: str, who: str, reason: str) -> None:
+        """Cancels the goal's running review, which nobody will read now, and keeps what it found. A cancel
+        that fails is logged: what the operator asked for goes on."""
+        try:
+            plan_review.cancel(goal_id, tasks, events, who, reason)
+        except Exception as err:  # noqa: BLE001 - the review runs on to its end, and its findings are kept
+            log.error(
+                "goal %s: the running plan review could not be canceled: %s: %s", goal_id, type(err).__name__, err
+            )
+
     def shown(goal: dict) -> dict:
         with db.connect(autocommit=True) as conn:
             plan = plans.latest(conn, goal["id"])
@@ -153,7 +163,7 @@ def register(
             "review_usd": _review_usd(),
             # The plan's state and the one thing it asks now, with its buttons (actions.plan_decision): the Plan
             # page draws this and decides nothing itself.
-            "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd(), review),
+            "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd(), review, _review_usd()),
             # The plan's figures for a glance, and what it changes about the version it is compared with.
             "glance": glance,
             "changes": changed,
@@ -207,6 +217,8 @@ def register(
             )
         items = [i.model_dump() for i in body.items] if body.items is not None else None
         planning.edit(goal, [d.model_dump() for d in body.drafts], who, events, items)
+        # The review read the version before the edit: its findings are kept, and it stops spending.
+        stop_review(goal_id, who, "the operator edited the plan")
         return shown(goal)
 
     @app.post("/v1/goals/{goal_id}/replan", status_code=202)
@@ -398,6 +410,8 @@ def register(
                 except Exception as err:  # A missed renewal is retried at the next; the claim still stands.
                     log.warning("could not renew the approval claim on goal %s: %s", goal_id, err)
 
+        # A review still reading the plan is of no use once the operator approves it as it stands.
+        await asyncio.to_thread(stop_review, goal_id, who, "the operator approved the plan")
         # One approval at a time. It writes each new task to the tracker, which outlasts a browser's wait, and
         # an operator who saw no answer pressed again: each press created every issue once more.
         if not await asyncio.to_thread(claim):
