@@ -114,7 +114,7 @@ function GitSource({ url, gitRef: ref, path, repos, refs, paths, onUrl, onRef, o
   const at = ref || refs.fallback || "the default branch";
   return (
     <Stack gap="sm">
-      <Labeled label="Repository" description="Later changes there change nothing here.">
+      <Labeled label="Repository" description="Later changes there don't reach this copy.">
         <PickedName label="Repository" what="repository" where="The registry" value={url} empty={loading(repos) ? "Loading…" : "Pick a repository"} known={repos.known} unreadable={repos.error} testId="skill-repo-unknown" strict readOnly={loading(repos)} onCommit={onUrl} />
         <Unreadable what="registered repositories" error={repos.error} />
       </Labeled>
@@ -303,13 +303,13 @@ export function SkillsView({ staging: s, profiles }: { staging: Staging; profile
           })}
         </DataTable>
       ) : (
-        <Empty>No skill yet. A skill is packaged instructions an agent loads for a kind of work. Import one above, from a git repository or from files, then name it on a harness profile.</Empty>
+        <Empty>No skills yet. A skill is a set of instructions an agent loads for one kind of work. Import one above, then add it to a harness profile.</Empty>
       )}
       {!s.readOnly && <RemovedRows what="skill" rows={removedEntries(s, "skills")} />}
       {!s.readOnly && (
         <Paper p="sm" withBorder>
           <Group justify="space-between">
-            <Text size="sm">Import a skill from a git repository, or from a folder on this machine. Then add it to a profile, and that profile's runs load it.</Text>
+            <Text size="sm">Import a skill from a git repository or a folder on this machine, then add it to a profile.</Text>
             <Button size="xs" leftSection={<IconDownload size={14} />} onClick={() => setImporting(true)}>Import a skill</Button>
           </Group>
         </Paper>

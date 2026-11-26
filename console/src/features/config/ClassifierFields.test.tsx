@@ -134,7 +134,7 @@ test("engine none drops the model and refuses a typed one", async () => {
   cleanup();
 
   const after = show({ engine: "none" }, { engines: ENGINES, error: null });
-  expect(screen.getByText("none, as no classifier runs")).toBeTruthy();
+  expect(screen.getByText("none: no classifier runs")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Edit Classifier model" }));
   const model = screen.getByRole("textbox", { name: "Classifier model" });
   fireEvent.change(model, { target: { value: "qwen3-32b" } });

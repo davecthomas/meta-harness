@@ -445,7 +445,7 @@ export function GoalPage() {
                 "Where its issues come from",
                 <Stack gap={0}>
                   <Text size="sm">{issueSourceLabel(goal.modality)}</Text>
-                  <Text size="sm" c="dimmed">Fixed when the goal was created.</Text>
+                  <Text size="sm" c="dimmed">Set at creation; it can't change.</Text>
                 </Stack>,
               ],
               // One tracker for all the goal's issues, fixed when it was created.
@@ -454,7 +454,7 @@ export function GoalPage() {
                 <Text size="sm">
                   {trackerTitle(goal.tracker ?? "github")}
                   {Object.entries(goal.tracker_settings ?? {}).filter(([name]) => name !== "assignee" && name !== "parent").map(([name, value]) => (name === "assigned" && value === "yes" ? ", takes the issues assigned to Muxxy" : `, ${name} ${value}`)).join("")}
-                  <Text span size="sm" c="dimmed" display="block">Fixed when the goal was created.</Text>
+                  <Text span size="sm" c="dimmed" display="block">Set at creation; it can't change.</Text>
                 </Text>,
               ],
               ["Assignee", <AssigneeField goal={goal} />],
@@ -468,8 +468,8 @@ export function GoalPage() {
               ["Budget", <BudgetRow {...editable} />],
               ["Priority", <PriorityEdit {...editable} />],
               ["Parallel tasks", <ParallelEdit {...editable} system={systemParallel} />],
-              ["Strict issues", <StrictIssuesEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
-              ["Provenance headers", <ProvenanceEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
+              ["Hold incomplete issues", <StrictIssuesEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
+              ["Mark new files with their run", <ProvenanceEdit goal={goal} readOnly={!open} save={(fields) => saveField(fields as Partial<Goal>)} />],
               ["Created", <Text size="sm">{goal.created_by}, {when(goal.created_at)}</Text>],
               ["Started", <Text size="sm">{goal.started_at ? when(goal.started_at) : "Not started"}</Text>],
               ...(goal.closed_at ? [[goal.status === "met" ? "Met" : "Ended", <Text size="sm">{when(goal.closed_at)}</Text>] as [string, ReactNode]] : []),
@@ -608,11 +608,11 @@ export function GoalPage() {
           })}
         </DataTable>
       ) : status === "not_started" ? (
-        <Empty>No tasks yet: the goal takes in its issues when it starts.</Empty>
+        <Empty>No tasks yet. They appear when the goal starts.</Empty>
       ) : goal.status === "planning" ? (
-        <Empty>No tasks yet: the plan's tasks are made when you approve it.</Empty>
+        <Empty>No tasks yet. They're created when you approve the plan.</Empty>
       ) : goal.tracker === "mh" ? (
-        <Empty>No tasks yet. This goal keeps its tasks in Muxxy: its approved plan's tasks appear here within a minute, and Plan again adds more.</Empty>
+        <Empty>No tasks yet. Once you approve the plan, its tasks appear here within a minute.</Empty>
       ) : (
         <Empty>
           No issues yet. {goal.label ? <>Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's repos, or pick issues with Add issues.</> : "Pick issues with Add issues."} The planner takes them in within a minute, or now with Take in issues now.

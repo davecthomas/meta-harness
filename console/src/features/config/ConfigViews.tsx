@@ -103,7 +103,7 @@ export function TaskPolicyView({ policy, maxSandboxes, staging, profiles, models
               kind="switch"
               label="Writing pass"
               value={doc.writing_pass !== false}
-              switchLabel={doc.writing_pass !== false ? "Check what is posted for people to read" : "Post what a run wrote as it is"}
+              switchLabel={doc.writing_pass !== false ? "Check text before Muxxy posts it" : "Post text unchecked"}
               changed={changed(s, ["writing_pass"])}
               reasons={s.reasons("writing_pass")}
               readOnly={s.readOnly}

@@ -231,7 +231,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(v) => s.stage(["max_unasked_usd"], v === null ? undefined : Number(v).toFixed(2))}
             />
-            <Text size="sm" c="dimmed">Covers carrying on a stopped plan, resizing tasks and fixing gaps. Each planning run you ask for starts it again.</Text>
+            <Text size="sm" c="dimmed">Covers continuing a stopped plan, resizing tasks and fixing gaps. Resets each time you ask for a planning run.</Text>
           </Stack>,
         ],
         [

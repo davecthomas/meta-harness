@@ -198,7 +198,7 @@ test("a draft kept while the task ran is offered for the next run, and Draft aga
 
   const draft = await openDraft();
   expect(asked.filter((a) => a.url === DRAFT_URL)[0].body).toEqual({ ref: REF });
-  expect(within(draft).getByTestId("fix-kept").textContent).toContain("kept while the issue's task ran");
+  expect(within(draft).getByTestId("fix-kept").textContent).toContain("Saved while the task ran");
   expect((within(draft).getByRole("textbox", { name: "Draft of Acceptance checks" }) as HTMLTextAreaElement).value).toBe("- `pytest -k kept`");
 
   fireEvent.click(within(draft).getByRole("button", { name: "Draft again" }));

@@ -8,8 +8,8 @@ export type Provenance = boolean | null;
 export type ProvenanceGoal = Goal & { provenance?: Provenance };
 
 const CHOICES = [
-  { value: "configured", label: "As configured: the deployment's setting for each repo" },
-  { value: "on", label: "On: each new file starts with a comment naming its run" },
+  { value: "configured", label: "Default: the deployment's setting for each repo" },
+  { value: "on", label: "On: each new file starts with a comment naming the run that wrote it" },
   { value: "off", label: "Off: new files get no header" },
 ];
 
@@ -30,7 +30,7 @@ export function ProvenanceEdit(props: { goal: ProvenanceGoal; readOnly: boolean;
   return (
     <InlineField
       kind="select"
-      label="Provenance headers"
+      label="Mark new files with their run"
       readOnly={props.readOnly}
       value={provenanceChoice(props.goal.provenance)}
       data={CHOICES}

@@ -69,7 +69,7 @@ export function OverageEdit({ goal, readOnly, save }: FieldProps) {
       input={({ value, onChange, invalid }) => (
         <NumberInput
           aria-label="Allowed overage"
-          description="How far past its budget the goal may go before it stops. 0 stops at the budget exactly."
+          description="How far over budget the goal may run before stopping. 0 stops exactly at the budget."
           suffix="%"
           min={0}
           allowDecimal={false}
@@ -171,7 +171,7 @@ export function ResumeBudget(props: {
               </Text>
               <NumberInput
                 label={`Raise the budget from ${usd(from)} to`}
-                description="What it has spent, plus what its unfinished issues are likely to cost. Change it if you like."
+                description="What it has spent plus the likely cost of its unfinished issues. You can change it."
                 prefix="$"
                 min={0}
                 decimalScale={2}

@@ -618,7 +618,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
                 : "Starting its tasks."}
             </Text>
           </Group>
-          <Text size="sm" c="dimmed">Each task is written and checked before it is created, so this can take a few minutes. It keeps going if you leave this page, and there is nothing more to press.</Text>
+          <Text size="sm" c="dimmed">Writing and checking each task takes a few minutes. You can leave this page; nothing else needs you.</Text>
         </Stack>
       </Modal>
       <Modal opened={asking === "approve" && !approving && canApprove} onClose={() => setAsking(null)} title="Approve the plan" size="lg">
@@ -640,7 +640,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
             />
           )}
           {base.length > 0 && untracked && (
-            <Text size="sm" c="dimmed">This goal has no issue tracker: its tasks are kept in Muxxy only.</Text>
+            <Text size="sm" c="dimmed">This goal has no issue tracker: Muxxy keeps its tasks.</Text>
           )}
           {error && <Alert color="red" title="The plan was not approved" role="alert" data-testid="approve-error"><Text size="sm">{error}</Text></Alert>}
           <Group justify="flex-end">

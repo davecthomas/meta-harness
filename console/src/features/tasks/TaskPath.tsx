@@ -174,7 +174,7 @@ export function TaskPath(props: { events: MhEvent[]; checks?: PullChecks | null;
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(timer);
   }, [going]);
-  if (!path.length) return <Text size="sm" c="dimmed">Nothing has happened yet: the task has not started. Each step shows here as it happens.</Text>;
+  if (!path.length) return <Text size="sm" c="dimmed">Nothing yet: the task hasn't started. Each step shows here as it happens.</Text>;
   const sum = totals(path, now);
   const chosen = path.find((s) => s.key === picked) ?? null;
   const all = rows(path);

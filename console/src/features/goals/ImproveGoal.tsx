@@ -82,7 +82,7 @@ export function ImproveGoal({
         >
           Improve with AI
         </Button>
-        {!statement.trim() && <Text size="xs" c="dimmed">Write a description first: a model rewrites it with more detail.</Text>}
+        {!statement.trim() && <Text size="xs" c="dimmed">Write a description first, then a model can add detail.</Text>}
         {done && (
           <Text size="sm" c="dimmed" data-testid="improve-done">
             Rewritten with more detail.{" "}

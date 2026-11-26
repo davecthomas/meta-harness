@@ -56,7 +56,7 @@ export function SupervisorHealth() {
           </List.Item>
         ))}
       </List>
-      <Text size="sm" c="dimmed" mt={4}>An admin can read the cause in the planner's log, on the Logs page. While its sweep keeps failing, a goal takes in no issues and ends no tasks.</Text>
+      <Text size="sm" c="dimmed" mt={4}>An admin can find the cause in the planner's log on the Logs page. Until the sweep works again, goals take in no new issues and end no tasks.</Text>
     </Alert>
   );
 }

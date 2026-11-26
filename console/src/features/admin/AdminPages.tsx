@@ -51,7 +51,7 @@ export function AuditPage() {
       {view === "decisions" ? <Decisions /> : (
       <>
       <ErrorAlert error={error} />
-      {events && events.length === 0 && <Empty>No change has been made yet. A change to the configuration, the kill switch or a user's access is recorded here, with who made it.</Empty>}
+      {events && events.length === 0 && <Empty>No changes yet. Changes to configuration, the kill switch and user access show here, with who made them.</Empty>}
       {events && events.length > 0 && (
         <DataTable head={["When", "Who", "What"]}>
           {events.map((e) => (

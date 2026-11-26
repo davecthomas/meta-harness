@@ -128,7 +128,7 @@ export function JsonDialog(props: {
       <Stack gap="md">
         <JsonInput
           label="JSON"
-          description="Applying stages the changes with the rest; Review and save checks and saves them as one version."
+          description="Applying adds these to your other changes; Review and save checks them all, then saves one version."
           value={text}
           onChange={(v) => {
             setText(v);

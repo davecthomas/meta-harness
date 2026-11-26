@@ -88,7 +88,7 @@ test("two fields committed before the first save returns both persist", async ()
   );
 
   fireEvent.click(await screen.findByRole("radio", { name: "Assertive" }));
-  fireEvent.click(screen.getByRole("switch", { name: "Browser notifications for what needs me" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Browser notifications when something needs me" }));
   await waitFor(() => expect(put).toHaveLength(1));
   // The second waits for the first to be stored, then builds on it.
   expect(put[0]).toMatchObject({ planner: { auto_merge: true }, notifications: false });
@@ -96,7 +96,7 @@ test("two fields committed before the first save returns both persist", async ()
   await waitFor(() => expect(put).toHaveLength(2));
   expect(put[1]).toMatchObject({ planner: { auto_merge: true }, notifications: true });
   held[1]();
-  const notify = () => screen.getByRole("switch", { name: "Browser notifications for what needs me" }) as HTMLInputElement;
+  const notify = () => screen.getByRole("switch", { name: "Browser notifications when something needs me" }) as HTMLInputElement;
   await waitFor(() => expect(notify().disabled).toBe(false));
   expect(notify().checked).toBe(true);
   expect((screen.getByRole("radio", { name: "Assertive" }) as HTMLInputElement).checked).toBe(true);

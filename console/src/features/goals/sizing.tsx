@@ -217,10 +217,10 @@ export function HeldActions(props: { goalId: string; label: string | null; issue
 export function StrictIssuesEdit(props: { goal: Goal & { strict_issues?: boolean }; readOnly: boolean; save: (fields: { strict_issues: boolean }) => Promise<unknown> }) {
   return (
     <InlineSwitch
-      label="Strict issues"
+      label="Hold incomplete issues"
       checked={Boolean(props.goal.strict_issues)}
-      onText="On: an issue missing checks, paths or a testable outcome is held"
-      offText="Off: an issue missing something runs, with the gap on its card"
+      onText="On: an issue without acceptance checks, file paths or a testable result waits for you to fix it"
+      offText="Off: an issue missing any of these still runs, and its card says what is missing"
       readOnly={props.readOnly}
       save={(on) => props.save({ strict_issues: on })}
     />

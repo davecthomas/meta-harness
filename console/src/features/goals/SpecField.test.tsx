@@ -74,7 +74,7 @@ test("when the repo's files cannot be listed, the reason is said and the path is
 
 test("with no repository chosen, the panel says to choose one first", () => {
   show({ repos: [] }, () => undefined);
-  expect(screen.getByTestId("spec-needs-repo").textContent).toContain("Choose the goal's repository above first");
+  expect(screen.getByTestId("spec-needs-repo").textContent).toContain("Choose the goal's repository first");
 });
 
 test("an epic is picked in the panel from the tracker's list: it is the specification and the tasks' parent", async () => {

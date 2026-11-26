@@ -68,7 +68,7 @@ export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: Pl
       <Stack gap={2}>
         <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
         {/* While the planner or its reviewer works, nothing is asked: the page follows it as it goes. */}
-        {working && <Text size="sm" c="dimmed">Nothing needs you until this is done.</Text>}
+        {working && <Text size="sm" c="dimmed">Nothing needs you until this finishes.</Text>}
       </Stack>
     </Group>
   );

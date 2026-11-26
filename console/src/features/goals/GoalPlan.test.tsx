@@ -171,7 +171,7 @@ test("an approval shows its tasks being created, and an answer that never comes 
 
   const progress = await screen.findByTestId("approve-progress");
   expect(progress.textContent).toContain("Creating its tasks: 0 of 3 so far.");
-  expect(progress.textContent).toContain("there is nothing more to press");
+  expect(progress.textContent).toContain("nothing else needs you");
   await waitFor(() => expect(screen.queryByRole("button", { name: "Approve and start" })).toBeNull());
   expect(screen.queryByTestId("approve-error")).toBeNull();
 
@@ -294,7 +294,7 @@ test("a goal with no tracker is told its tasks stay in Muxxy, with no choice to 
   const dialog = await screen.findByRole("dialog", { name: "Approve the plan" });
 
   expect(within(dialog).queryByRole("switch")).toBeNull();
-  expect(dialog.textContent).toContain("This goal has no issue tracker: its tasks are kept in Muxxy only.");
+  expect(dialog.textContent).toContain("This goal has no issue tracker: Muxxy keeps its tasks.");
   fireEvent.click(within(dialog).getByRole("button", { name: "Approve and start" }));
   await waitFor(() => expect(approved).toHaveLength(1));
   expect(asked.at(-1)!.body).toEqual({ track: false });

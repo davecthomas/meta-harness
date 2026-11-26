@@ -35,11 +35,11 @@ export function ReviewersPage() {
     <>
       <PageHeader
         title="Reviewers"
-        description="The next round's reviewer judges each finding fixed or not. A finding no round followed is never judged."
+        description="The next review round judges whether each finding was fixed. A finding with no later round stays unjudged."
       />
       <SegmentedControl mb="md" size="xs" value={days} onChange={setDays} data={RANGES} />
       <ErrorAlert error={error} />
-      {rows && rows.length === 0 && <Empty>No review round in this time. Each round a reviewer runs is counted here.</Empty>}
+      {rows && rows.length === 0 && <Empty>No review rounds in this period.</Empty>}
       {rows && rows.length > 0 && (
         <DataTable head={["Reviewer", "Rounds", "Findings", "Fixed", "Not fixed", "Dismissed", "Never judged", "Fixed of judged", "Cost"]}>
           {rows.map((row) => (

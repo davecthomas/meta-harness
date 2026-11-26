@@ -68,7 +68,7 @@ export function Reviews({ task, rounds, onAnswered }: { task: Task; rounds: Revi
         <Alert color="orange" title={`Round ${held} waits on you before its fix run`} role="alert">
           <Stack gap="xs">
             <Text size="sm">{moneyText(task.status_reason)}</Text>
-            <Text size="sm">Dismiss any finding that is wrong, with why. The fix run is asked only for the rest; with none left, the round counts as clean.</Text>
+            <Text size="sm">Dismiss any wrong finding and say why. The fix run handles the rest; if none are left, the round counts as clean.</Text>
             <Group gap="sm">
               <Button size="xs" loading={busy} onClick={() => void answer(() => api.proceedReview(task.id, held))}>Send to fix now</Button>
               {error && <Text size="sm" c="red">{error}</Text>}

@@ -86,7 +86,7 @@ export function UsersPage() {
           <Text size="sm" c="dimmed" mt="xs">The console sends no email: after inviting, use Copy invite on their row and send it to them yourself.</Text>
         </form>
       </Paper>
-      {users && users.length === 0 && <Empty>No one has been invited here yet. Until someone is, the accounts the deployment was set up with (its MH_OPERATORS setting) may sign in. Invite an account above to manage access from this page.</Empty>}
+      {users && users.length === 0 && <Empty>No one has been invited yet. Until someone is, the accounts in the deployment's MH_OPERATORS setting can sign in. Invite an account above to manage access here.</Empty>}
       {users && users.length > 0 && (
         <DataTable head={["User", "Role", "Status", "Invited by", "Last sign-in", ""]}>
           {users.map((u) => {

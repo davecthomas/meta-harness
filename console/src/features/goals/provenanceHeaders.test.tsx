@@ -20,21 +20,21 @@ test("a goal's provenance setting reads as one of three choices, and the summary
 test("choosing Off saves provenance false, and As configured saves null", async () => {
   const saved: unknown[] = [];
   const { unmount } = renderIn(<ProvenanceEdit goal={goal(null)} readOnly={false} save={async (f) => saved.push(f)} />);
-  expect(screen.getByText("As configured: the deployment's setting for each repo")).toBeTruthy();
+  expect(screen.getByText("Default: the deployment's setting for each repo")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit Provenance headers" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit Mark new files with their run" }));
   fireEvent.click(await screen.findByRole("option", { name: "Off: new files get no header", hidden: true }));
   await waitFor(() => expect(saved).toEqual([{ provenance: false }]));
   unmount();
 
   renderIn(<ProvenanceEdit goal={goal(true)} readOnly={false} save={async (f) => saved.push(f)} />);
-  fireEvent.click(screen.getByRole("button", { name: "Edit Provenance headers" }));
-  fireEvent.click(await screen.findByRole("option", { name: /^As configured/, hidden: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit Mark new files with their run" }));
+  fireEvent.click(await screen.findByRole("option", { name: /^Default: the deployment/, hidden: true }));
   await waitFor(() => expect(saved).toEqual([{ provenance: false }, { provenance: null }]));
 });
 
 test("a closed goal shows its provenance setting without a way to change it", () => {
   renderIn(<ProvenanceEdit goal={goal(false)} readOnly save={async () => undefined} />);
   expect(screen.getByText("Off: new files get no header")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Edit Provenance headers" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit Mark new files with their run" })).toBeNull();
 });

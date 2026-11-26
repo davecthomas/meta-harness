@@ -142,7 +142,7 @@ export function NextSteps({ goalId, ended, planning = false, watch = "" }: { goa
       <Paper withBorder p="sm" mb="md" data-testid="next-steps">
         <Group justify="space-between" wrap="wrap" gap="sm">
           <Stack gap={2}>
-            <Text size="sm"><Text span fw={650}>Next steps. </Text>{written ? "I found nothing in this goal's records that calls for more work yet." : "I suggest what to do after this goal by myself once it ends."}</Text>
+            <Text size="sm"><Text span fw={650}>Next steps. </Text>{written ? "I found nothing in this goal's records that calls for more work yet." : "When this goal ends, I'll suggest what to do next."}</Text>
             {continues}
           </Stack>
           {read?.enabled && (

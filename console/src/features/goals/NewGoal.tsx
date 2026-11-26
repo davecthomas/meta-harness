@@ -67,7 +67,7 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
   const free = issues.filter((i) => !i.held_by);
   const held = issues.length - free.length;
   // The label field already says no open issue has it; this says only what then happens.
-  if (!issues.length) return <Text size="sm" c="dimmed">The goal takes in issues with this label as they appear.</Text>;
+  if (!issues.length) return <Text size="sm" c="dimmed">Issues given this label later join the goal.</Text>;
   return (
     <Stack gap={4} data-testid="label-issues">
       <Text size="sm" fw={600}>
@@ -79,7 +79,7 @@ export function LabelIssues({ label, issues }: { label: string; issues: LabeledI
         </Text>
       ))}
       {free.length > SHOWN && <Text size="xs" c="dimmed">and {free.length - SHOWN} more</Text>}
-      <Text size="sm" c="dimmed">The goal takes every open issue with this label, now and later. Pick issues adds others.</Text>
+      <Text size="sm" c="dimmed">The goal runs every open issue with this label, now and later. Pick issues adds others.</Text>
     </Stack>
   );
 }
@@ -633,7 +633,7 @@ export function NewGoal() {
               )}
               <NumberInput
                 label="Budget"
-                description="Left empty, the most one goal may spend."
+                description="Leave empty for the most one goal may spend."
                 prefix="$"
                 min={0}
                 decimalScale={2}
@@ -667,7 +667,7 @@ export function NewGoal() {
                     {budget !== "" && (
                       <NumberInput
                         label="Allowed overage"
-                        description="How far past its budget the goal may go before it stops, never past the most one goal may spend. 0 stops at the budget exactly."
+                        description="How far over budget the goal may run before stopping. 0 stops exactly at the budget."
                         suffix="%"
                         min={0}
                         allowDecimal={false}
