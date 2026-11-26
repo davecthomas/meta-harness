@@ -1,10 +1,10 @@
 // Created by Muxxy in run t-33d72d7e8075:run-1 on harness:pi-lean/claude:claude-sonnet-5-5.
 
 import { useEffect, useRef, useState } from "react";
-import { Anchor, Button, Group, Paper, Stack, Text, TextInput } from "@mantine/core";
+import { Anchor, Button, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../../api";
-import { when } from "../../components/ui";
+import { SubTitle, when } from "../../components/ui";
 import { NeedButton } from "../goals/needActions";
 import { reloadNeeds, useGoalNeeds } from "./needsYou";
 import type { GoalAction, ReportItem, SuggestedAction, WorkAnswer, WorkReportAnswer } from "./api";
@@ -41,7 +41,7 @@ function Items({ title, items, actions, shown, onDone }: { title: string; items:
   if (!items.length) return null;
   return (
     <Stack gap={4}>
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{title}</Text>
+      <SubTitle mt={4}>{title}</SubTitle>
       {items.map((item, i) => {
         const first = !!actions && !!item.goal_id && !shown?.has(item.goal_id);
         if (first) shown?.add(item.goal_id);
@@ -152,7 +152,7 @@ export function WorkReport() {
     <Paper withBorder p="md" mb="lg" data-testid="work-report">
       <Stack gap="xs">
         <Group justify="space-between" align="baseline">
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Report on all goals</Text>
+          <Title order={4}>Report on all goals</Title>
           {report && <Text size="xs" c="dimmed" data-testid="work-report-written">Written {when(report.written_at)}</Text>}
         </Group>
         {failed && <Text size="sm" c="red" role="alert">Could not refresh the report: {failed}.{report ? " The last report stays." : ""}</Text>}
