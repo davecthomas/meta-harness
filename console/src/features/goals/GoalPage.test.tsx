@@ -413,7 +413,7 @@ test("a goal being planned shows its plan where the operator lands, with the dec
     goal_id: "g-1",
     status: "planning",
     plan: { version: 2, source: "planner", created_at: "2026-11-25T12:00:00Z", drafts: [{ ref: "draft:1", title: "Return the review's limit", body: "Add review_usd.", repo: "o/r", depends_on: [], labels: [] }], gaps: [], invalid: [], issues: [], items: [] },
-    decision: { state: "ready", says: "1 task in 1 repo. Running it may spend up to $3 of your $100 budget.", buttons: [{ action: "approve_plan", label: "Approve and start (up to $3)" }, { action: "replan", label: "Plan again (up to $4)" }] },
+    decision: { state: "ready", says: "1 task in 1 repo. Running it may spend up to $3 of your $100 budget.", buttons: [{ action: "approve_plan", label: "Approve and start" }, { action: "replan", label: "Plan again (up to $4)" }] },
     glance: null,
     changes: null,
     review: null,
@@ -436,7 +436,7 @@ test("a goal being planned shows its plan where the operator lands, with the dec
   expect((await screen.findByTestId("plan-decision-says")).textContent).toBe("1 task in 1 repo. Running it may spend up to $3 of your $100 budget.");
   expect(await screen.findByText("Return the review's limit")).toBeTruthy();
   // One place decides: the approval is the decision's button, and nothing sends the operator elsewhere to read the plan.
-  expect(screen.getAllByRole("button", { name: /^Approve/ }).map((b) => b.textContent)).toEqual(["Approve and start (up to $3)"]);
+  expect(screen.getAllByRole("button", { name: /^Approve/ }).map((b) => b.textContent)).toEqual(["Approve and start"]);
   expect(screen.queryByRole("link", { name: /plan/i })).toBeNull();
   expect(screen.queryByTestId("planner-updates")).toBeNull();
 });

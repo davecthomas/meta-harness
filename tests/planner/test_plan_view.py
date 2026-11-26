@@ -60,14 +60,14 @@ def test_a_plan_ready_to_approve_asks_one_thing_and_says_what_it_may_spend():
     assert found["state"] == "ready"
     assert found["says"] == "2 tasks in 1 repo. Running them may spend up to $40 of your $100 budget."
     assert found["buttons"] == [
-        {"action": "approve_plan", "label": "Approve and start (up to $40)"},
+        {"action": "approve_plan", "label": "Approve and start"},
         {"action": "replan", "label": "Plan again (up to $4)"},
     ]
     # A budget is a hard cap, and the plan says when it asks for more.
     tight = actions.plan_decision({**GOAL, "max_usd": "30.00"}, _plan(), {**glance, "budget_usd": "30.00"})
     assert tight["says"].endswith("All of them may need up to $40, and your $30 budget stops work before that.")
     assert [b["label"] for b in tight["buttons"]] == [
-        "Approve and start (up to $30)",
+        "Approve and start",
         "Raise the budget",
         "Plan again",
     ], "the button names what approving can spend, and raising the budget is offered beside it"
