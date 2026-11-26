@@ -1,6 +1,7 @@
 import { Badge, Code, Group, Stack, Text } from "@mantine/core";
 import { InlineField } from "../../components/InlineField";
 import { Facts } from "../../components/ui";
+import { SimilarGoalsSettings } from "./SimilarGoalsSettings";
 import { changed, type Staging } from "./ConfigViews";
 import { joinCandidate, splitCandidate } from "./staging";
 
@@ -220,6 +221,7 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
             <Text size="sm" c="dimmed">For each planning run.</Text>
           </Stack>,
         ],
+        ["Similar goals", <SimilarGoalsSettings staging={s} />],
         [
           "Spend limit without asking",
           <Stack gap={4}>
