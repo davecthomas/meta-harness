@@ -502,3 +502,32 @@ test("a review's open problems are in the decision's box, over Fix and Approve, 
   expect(screen.getAllByText("The new event is not in the schema snapshot.")).toHaveLength(1);
   expect(screen.getByTestId("plan-glance").textContent).toBe("1 task in r · may spend up to $3 of your $100 budget · 1 can start at once");
 });
+
+test("the figures are not said again under a decision that already says what the plan may spend", async () => {
+  const finding = { id: "f-1", kind: "missing_work", severity: "blocking", status: "open", says: "The new event is not in the schema snapshot.", change: "Add it to registered_schemas.json.", tasks: ["dismiss-api"] };
+  const plan = {
+    goal_id: "g-1",
+    status: "planning",
+    plan: { version: 2, source: "planner", created_at: "2026-11-25T12:00:00Z", drafts: [{ ref: "draft:1", title: "Dismiss a gap", body: "Add it.", repo: "o/r", depends_on: [], labels: [] }], gaps: [], invalid: [], issues: [], items: [] },
+    decision: { state: "ready", says: "1 task in 1 repo. Running it may spend up to $3 of your $100 budget.", buttons: [{ action: "fix_findings", label: "Fix it (up to $4)" }, { action: "approve_plan", label: "Approve with 1 open" }] },
+    glance: { tasks: 1, unsized: 0, repos: ["o/r"], may_spend_usd: "3", budget_usd: "100", can_start: 1, open_questions: 0 },
+    changes: null,
+    review: { reviewer: "harness:pi-review/openai:gpt-6-sol", model: "gpt-6-sol", rounds: 1, state: "done", version: 2, task_id: "t-r", summary: "", findings: [finding], counts: { found: 1, fixed: 0, open: 1 } },
+  };
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
+    if (url.startsWith("/v1/goals/g-1/plan")) return respond(plan);
+    return respond({ ...goal("planning"), planned: true, adversarial_review: true, issues: [] });
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<GoalPage />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  await screen.findByTestId("plan-decision");
+  expect(screen.queryByTestId("plan-glance")).toBeNull();
+});
