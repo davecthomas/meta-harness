@@ -118,6 +118,8 @@ export interface GoalPlan {
   planning_task_id: string | null;
   // When planning was last asked for; absent from a planner older than this field.
   planning_asked_at?: string | null;
+  // What a plan review may cost, as the planner words it, such as "4.00"; absent from a planner older than this field.
+  review_usd?: string | null;
   approved_at: string | null;
   // An approval is creating the plan's tasks now (plan.created grows as each exists), and why the last one
   // stopped when it did not finish.

@@ -289,7 +289,7 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
                 onChange={(event) => void run(() => api.setPlanReview(goal.id, event.currentTarget.checked))}
               />
               {review?.state !== "running" && review?.version !== plan.plan?.version && (
-                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>Review this plan</Button>
+                <Button size="xs" variant="default" disabled={busy} onClick={() => void run(() => api.reviewPlan(goal.id))}>{plan.review_usd ? `Review this plan (up to $${plan.review_usd})` : "Review this plan"}</Button>
               )}
             </Group>
           )
