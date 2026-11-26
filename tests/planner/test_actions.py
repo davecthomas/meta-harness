@@ -120,3 +120,32 @@ def test_each_action_says_what_its_button_is_for_from_the_records():
     ]
     spent = actions.for_goal({"id": "g-1", "status": "budget_exhausted", "max_usd": "40.00"}, [], [])
     assert spent[0]["what"] == "The goal has spent its budget of $40.00, so its work has stopped."
+
+
+_PLANNING = {"id": "g-1", "status": "planning"}
+
+
+def test_a_running_review_offers_approve_now_as_a_link_and_no_button():
+    plan = {"version": 2, "drafts": [{}]}
+    review = {"state": "running", "version": 2, "model": "Gemini"}
+
+    found = actions.plan_decision(_PLANNING, plan, review=review)
+
+    assert found["state"] == "improving"
+    assert found["buttons"] == []
+    assert found["link"] == {"action": "approve_plan", "label": "Approve now"}
+    assert "link" not in actions.plan_decision(_PLANNING, plan)
+
+
+def test_a_canceled_review_of_an_older_version_offers_another():
+    plan = {"version": 3, "drafts": [{}]}
+    review = {"state": "canceled", "version": 2}
+
+    found = actions.plan_decision(_PLANNING, plan, review=review, review_usd="4.00")
+    bare = actions.plan_decision(_PLANNING, plan, review=review)
+    same = actions.plan_decision(_PLANNING, plan, review={**review, "version": 3}, review_usd="4.00")
+
+    assert [b["action"] for b in found["buttons"]][:2] == ["approve_plan", "review_plan"]
+    assert found["buttons"][1]["label"] == "Review again (up to $4)"
+    assert bare["buttons"][1]["label"] == "Review again"
+    assert all(b["action"] != "review_plan" for b in same["buttons"])

@@ -118,6 +118,14 @@ def _usd(amount: object) -> str:
     return "$" + (text[:-3] if text.endswith(".00") else text)
 
 
+def _older(version: object, current: object) -> bool:
+    """Whether a version is older than the current one."""
+    try:
+        return int(version) < int(current)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return False
+
+
 def _count(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
@@ -129,6 +137,7 @@ def plan_decision(
     suggestion: dict | None = None,
     planning_usd: object = None,
     review: dict | None = None,
+    review_usd: object = None,
 ) -> dict:
     """The plan's state and the one thing it asks of the operator now, from the goal's records: what the Plan
     page's decision bar says, in two sentences at most, and its buttons, the recommended one first.
@@ -138,7 +147,11 @@ def plan_decision(
     it cannot disagree with what `for_goal` lists as needing the operator.
 
     glance: the plan's figures (plan_view.glance). planning_usd: the spend limit of one planning run. review:
-    the plan's adversarial review (plan_review.current), when it has one."""
+    the plan's adversarial review (plan_review.current), when it has one. review_usd: the spend limit of one
+    review, named on the button that runs another after a canceled one.
+
+    While a review runs the decision has a link (Approve now): a way through that is not the recommended
+    course, so it is no button."""
     again = f" (up to {_usd(planning_usd)})" if planning_usd is not None else ""
     replan = {"action": "replan", "label": f"Plan again{again}"}
     drafting = bool(goal.get("plan_task_id"))
@@ -160,11 +173,12 @@ def plan_decision(
             "buttons": [],
         }
     if review and review.get("state") == "running" and review.get("version") == plan.get("version"):
-        # Waiting is the recommended course, so nothing is asked while the reviewer reads.
+        # Waiting is the recommended course, so no button is offered while the reviewer reads.
         return {
             "state": "improving",
             "says": f"{review.get('model') or 'A second model'} is checking the plan for problems.",
             "buttons": [],
+            "link": {"action": "approve_plan", "label": "Approve now"},
         }
     if suggestion:
         gaps = len(suggestion.get("fixes") or [])
@@ -190,6 +204,11 @@ def plan_decision(
             "says": f"This plan cannot be approved yet: {str(reasons[0]).rstrip('.')}.{more}",
             "buttons": [replan],
         }
+    # A review canceled on an older version leaves the current one unchecked: offer another.
+    rereview = []
+    if review and review.get("state") == "canceled" and _older(review.get("version"), plan.get("version")):
+        label = f"Review again (up to {_usd(review_usd)})" if review_usd is not None else "Review again"
+        rereview = [{"action": "review_plan", "label": label}]
     figures = glance or {}
     repos = len(figures.get("repos") or [])
     spend = figures.get("may_spend_usd")
@@ -212,6 +231,7 @@ def plan_decision(
                 {"action": "fix_findings", "label": f"{'Fix it' if n == 1 else f'Fix all {n}'}{again}"},
                 # The sentence says what the plan may spend; an amount on the button read as the goal's limit.
                 {"action": "approve_plan", "label": f"Approve with {n} open"},
+                *rereview,
             ],
         }
     says = f"{_count(tasks, 'task')} in {_count(repos, 'repo')}." if repos else f"{_count(tasks, 'task')}."
@@ -230,7 +250,7 @@ def plan_decision(
     return {
         "state": "ready",
         "says": says,
-        "buttons": [{"action": "approve_plan", "label": approve}, *buttons],
+        "buttons": [{"action": "approve_plan", "label": approve}, *rereview, *buttons],
     }
 
 
