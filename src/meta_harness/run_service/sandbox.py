@@ -28,6 +28,8 @@ Docker publishes no port from an internal network.
 """
 
 import asyncio
+import logging
+import random
 import hashlib
 import json
 import os
@@ -53,6 +55,9 @@ CONTAINER_PORT = 8090
 EGRESS_PROXY = os.environ.get("EGRESS_PROXY_CONTAINER", "mh-egress-proxy")
 EGRESS_PORT = 3128
 CONTROL_PORT = 8091
+
+
+log = logging.getLogger("meta_harness.run_service")
 
 
 class SandboxError(Exception):
@@ -390,10 +395,25 @@ async def save_log(name: str, ref: str, run_id: str) -> bool:
     return code == 0
 
 
+# How many times a docker network is asked for before the run fails, and the first wait between: docker can
+# refuse one for a moment (a plan review failed on "docker network create ... failed" with nothing more, and a run
+# 22 seconds later got its network). Asking again is harmless: the network is looked for first.
+NETWORK_TRIES = 4
+NETWORK_FIRST_WAIT = 1.0
+
+
 async def _ensure_network(network: str, run_id: str, ref: str) -> None:
-    """The run's own internal network, with the egress proxy attached."""
-    code, _, _ = await _docker("network", "inspect", network)
-    if code != 0:
+    """The run's own internal network, with the egress proxy attached. A refusal is asked again a few times,
+    with growing waits, before the run fails (AGENTS.md: a transient failure is retried before it is reported).
+
+    Raises:
+        SandboxError: Docker still would not make the network.
+    """
+    wait = NETWORK_FIRST_WAIT
+    for attempt in range(1, NETWORK_TRIES + 1):
+        code, _, _ = await _docker("network", "inspect", network)
+        if code == 0:
+            break
         code, _, err = await _docker(
             "network", "create", "--internal",
             "--label", f"{SAMPLE_LABEL}=1",
@@ -401,8 +421,23 @@ async def _ensure_network(network: str, run_id: str, ref: str) -> None:
             "--label", f"meta-harness.ref={ref}",
             network,
         )  # fmt: skip
-        if code != 0 and "already exists" not in err:
-            raise SandboxError(f"docker network create {network} failed: {err.strip()}")
+        if code == 0 or "already exists" in err:
+            break
+        said = err.strip() or f"docker exited {code} and said nothing"
+        if attempt == NETWORK_TRIES:
+            log.error("docker network create %s failed after %d tries: %s", network, attempt, said)
+            raise SandboxError(f"docker network create {network} failed after {attempt} tries: {said}")
+        pause = wait + random.uniform(0, wait / 2)
+        log.warning(
+            "docker network create %s: %s; try %d of %d failed, trying again in %.1fs",
+            network,
+            said,
+            attempt,
+            NETWORK_TRIES,
+            pause,
+        )
+        await asyncio.sleep(pause)
+        wait *= 2
     code, _, err = await _docker("network", "connect", network, EGRESS_PROXY)
     if code != 0 and "already exists" not in err:
         raise SandboxError(f"could not attach the egress proxy to {network}: {err.strip()}")
