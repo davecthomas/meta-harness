@@ -205,6 +205,9 @@ test("what to weigh before approving is in the decision's own box, over its butt
   expect(weigh.textContent).toContain("No task covers the export.");
   // Read before the button is reached: it comes first in the box.
   expect(weigh.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // A box with a list in it is too tall to keep in view over the page, and its sentence takes no stretch.
+  expect(bar.style.position).toBe("");
+  expect((within(bar).getByTestId("plan-decision-says").closest(".mantine-Group-root") as HTMLElement).style.flex).toBe("");
 });
 
 test("a plan still being worked on shows nothing to weigh: there is nothing to press yet", () => {

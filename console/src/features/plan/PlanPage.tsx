@@ -48,6 +48,8 @@ const dollars = (amount: string | null | undefined): string => {
 // scrolls, so the decision is never more than a glance away.
 export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[] }) {
   const working = decision.state === "drafting" || decision.state === "improving";
+  const weigh = decision.buttons.length > 0 ? gaps : [];
+  const weighFirst = weigh.length > 0;
   const buttons = (
     <Group gap="xs">
       {decision.buttons.map((button, i) => (
@@ -57,8 +59,10 @@ export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: Pl
       ))}
     </Group>
   );
+  // In a row, the sentence takes the room the buttons leave. In a column, a flex basis would be a height: the
+  // sentence then sat in a tall empty box.
   const says = (
-    <Group gap="sm" wrap="nowrap" style={{ flex: "1 1 320px" }}>
+    <Group gap="sm" wrap="nowrap" style={weighFirst ? undefined : { flex: "1 1 320px" }}>
       {working && <Loader size="sm" />}
       <Stack gap={2}>
         <Text size="lg" fw={600} lh={1.35} data-testid="plan-decision-says">{decision.says}</Text>
@@ -69,9 +73,9 @@ export function DecisionBar({ decision, onAct, busy, gaps = [] }: { decision: Pl
   );
   // What to weigh before deciding is part of the decision: it is in this one box, over the buttons, so it is
   // read before they are reached. With nothing to weigh, the sentence and the buttons share a line.
-  const weigh = decision.buttons.length > 0 ? gaps : [];
   return (
-    <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={{ position: "sticky", top: "var(--app-shell-header-height, 72px)", zIndex: 5 }}>
+    // Kept in view as the page scrolls only while it is one line: a taller box would cover what is read under it.
+    <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={weighFirst ? undefined : { position: "sticky", top: "var(--app-shell-header-height, 72px)", zIndex: 5 }}>
       {weigh.length === 0 ? (
         <Group justify="space-between" wrap="wrap" gap="md">{says}{buttons}</Group>
       ) : (
