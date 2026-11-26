@@ -32,7 +32,7 @@ from meta_harness import auth
 from meta_harness.config import images, programs, skills, store
 from meta_harness.config.classifiers import classifier_engines
 from meta_harness.config.kinds import KINDS, ConfigError, sandbox_ceiling
-from meta_harness.config.models import catalog
+from meta_harness.config.models import catalog, embedding_catalog
 
 
 class SaveIn(BaseModel):
@@ -116,6 +116,11 @@ def router(
     def models(who: str = Depends(operator)) -> dict:
         """Every priced completions model a tier candidate can name, as <engine>:<model>."""
         return {"models": catalog()}
+
+    @api.get("/v1/config/embedding-models")
+    def embedding_models(who: str = Depends(operator)) -> dict:
+        """Every priced embedding model, as <engine>:<model>: what compares a new goal with the open ones."""
+        return {"models": embedding_catalog()}
 
     @api.get("/v1/config/images")
     def harness_images(who: str = Depends(operator)) -> dict:

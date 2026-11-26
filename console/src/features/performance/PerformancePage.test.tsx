@@ -62,6 +62,8 @@ function show(costs: Costs, path = "/performance", numbers: unknown = NUMBERS, a
     all.push(url);
     if (url.startsWith("/v1/performance")) return Promise.resolve(new Response(JSON.stringify(numbers), { status: 200, headers: { "Content-Type": "application/json" } }));
     if (url.startsWith("/v1/costs/goals")) return Promise.resolve(new Response(JSON.stringify(GOAL_COSTS), { status: 200, headers: { "Content-Type": "application/json" } }));
+    // The similar goals table reads its own list (SimilarShown.test.tsx); these tests are about costs.
+    if (url.startsWith("/v1/goals/similar")) return Promise.resolve(new Response(JSON.stringify({ shown: [], cutoff: 0.7, model: "m" }), { status: 200, headers: { "Content-Type": "application/json" } }));
     asked.push(url);
     return Promise.resolve(new Response(JSON.stringify(costs), { status: 200, headers: { "Content-Type": "application/json" } }));
   });

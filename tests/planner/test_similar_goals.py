@@ -156,3 +156,13 @@ def test_the_settings_are_checked_and_a_saved_configuration_without_them_uses_th
     similar_goals.check_settings()
     assert similar_goals.cosine([1.0, 0.0], [1.0, 0.0]) == 1.0 and similar_goals.cosine([1.0, 0.0], [0.0, 1.0]) == 0.0
     assert similar_goals.cosine([1.0], [1.0, 2.0]) == 0.0 and similar_goals.cosine([0.0], [0.0]) == 0.0
+
+
+def test_the_embedding_models_are_listed_for_the_setting_and_are_only_embedding_models():
+    from meta_harness.config.models import catalog, embedding_catalog
+
+    found = [m["name"] for m in embedding_catalog()]
+
+    assert "openai:text-embedding-3-small" in found and "voyage:voyage-4" in found
+    assert all(":" in name for name in found) and found == sorted(found, key=lambda n: tuple(n.split(":", 1)))
+    assert not set(found) & {m["name"] for m in catalog()}, "a completions model is not an embedding model"
