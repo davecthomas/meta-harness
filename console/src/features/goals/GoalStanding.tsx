@@ -18,9 +18,12 @@ export function standingNote(standing: Standing | null | undefined): string {
 // One alert per cause: a task the failures alert above the board already explains (explained) is not listed here
 // again, and a goal that waits only on its budget is the budget alert's to say (budgetShown). With nothing left
 // of its own to say, this shows nothing.
-export function GoalStanding({ standing, explained, budgetShown }: { standing: Standing | null | undefined; explained?: Set<string>; budgetShown?: boolean }) {
+// planning: the goal's plan is being written or waits to be decided. The planner's panel under this says where
+// the plan stands, read as the page is, so this says nothing of the plan beside it.
+export function GoalStanding({ standing, explained, budgetShown, planning }: { standing: Standing | null | undefined; explained?: Set<string>; budgetShown?: boolean; planning?: boolean }) {
   if (!standing || standing.state !== "needs_you") return null;
   const yours = standing.yours.filter((mine) => !explained?.has(mine.task_id));
+  if (planning && yours.length === 0) return null;
   if (standing.yours.length > 0 && yours.length === 0) return null;
   if (standing.yours.length === 0 && budgetShown) return null;
   return (

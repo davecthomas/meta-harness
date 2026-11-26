@@ -41,6 +41,10 @@ def of_goal(goal: dict, tasks: list[dict], most: int = ALL) -> list[dict]:
     with db.connect(autocommit=True) as conn:
         links, plan = store.links(conn, goal["id"]), plans.latest(conn, goal["id"])
     suggestion = suggestions.current(goal["id"]) if goal["status"] == "planning" else None
+    if goal["status"] == "planning":
+        from meta_harness.planner import plan_review
+
+        plan = plan_review.marked(goal["id"], plan)
     if "budget_state" not in goal:
         goal = budget.view(dict(goal), goal.get("budget_policy") or "block")
     return actions.for_goal(goal, links, tasks, plan, suggestion, most)

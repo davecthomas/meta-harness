@@ -83,7 +83,8 @@ def actionable(
             action = of_plan
         else:
             action = "raise_budget" if goal["status"] == "budget_exhausted" else "open_issue"
-        if replanning and action in ("approve_plan", "fix_plan"):
+        # Nor while a second model is checking this version: its findings may change the plan.
+        if (replanning or (plan or {}).get("reviewing")) and action in ("approve_plan", "fix_plan"):
             continue
         out.append(
             {

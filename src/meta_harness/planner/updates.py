@@ -501,6 +501,8 @@ async def write(goal: dict, tasks: Any, events: Any, writer: Writer | None = Non
     from meta_harness.planner import plan_review
 
     reviewed = await asyncio.to_thread(plan_review.current, goal["id"]) if planning_now else None
+    if planning_now:
+        plan = await asyncio.to_thread(plan_review.marked, goal["id"], plan)
     tasks_of_goal = await asyncio.to_thread(tasks.list, None, goal["id"], 500)
     earlier = await asyncio.to_thread(latest, goal["id"], 1)
     before = earlier[0] if earlier else None

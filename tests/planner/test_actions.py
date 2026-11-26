@@ -51,6 +51,9 @@ def test_a_plan_is_offered_for_approval_only_when_it_can_be_approved():
     assert _kinds(planning, [], [], plan=None) == [], "no plan yet: the planner is drafting"
     resizing = {**planning, "plan_task_id": "t-9"}
     assert _kinds(resizing, [], [], plan={"version": 1, "invalid": ["too large"]}) == []
+    # While a second model checks this version, nothing about the plan is asked: its findings may change it.
+    assert _kinds(planning, [], [], plan={"version": 1, "invalid": [], "reviewing": True}) == []
+    assert _kinds(planning, [], [], plan={"version": 1, "invalid": ["too large"], "reviewing": True}) == []
     fix = {"fixes": ["a gap"], "changes": ["Adds: a task"]}
     # While the planner's fix waits, the plan is not offered for approval: one decision at a time.
     assert [k for k, _ in _kinds(planning, [], [], plan={"version": 1, "invalid": []}, suggestion=fix)] == [

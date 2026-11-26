@@ -21,7 +21,6 @@ import { RemoveIssue } from "./RemoveIssue";
 import { GoalFailures, failures } from "./GoalFailures";
 import { usd } from "../../money";
 import { ApprovedPlan } from "./GoalPlan";
-import { PlanLink } from "./PlanLink";
 import { NextSteps } from "./NextSteps";
 import { EVENT_BY_DO } from "./needActions";
 import { OPEN_SETTINGS, PlannerUpdates, SHOW_ISSUES } from "./PlannerUpdates";
@@ -359,13 +358,12 @@ export function GoalPage() {
       {/* An ended goal says what it left open in its tracker, with the button that closes it. */}
       {!open && <LeftOpenIssues goalId={goal.id} tracker={trackerTitle(goal.tracker ?? "github")} onClosed={() => void Promise.all([load(), loadProgress()])} />}
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
-      <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} />
+      <GoalStanding standing={goal.standing} explained={explained} budgetShown={budgetStanding(goal, spentNow) !== "ok"} planning={goal.status === "planning"} />
       {/* The planner's word on the goal, ahead of everything the page lists. */}
       <PlannerUpdates goalId={goal.id} open={open} planning={goal.status === "planning"} label={goal.label ?? null} />
       {/* What the planner would do next: by itself once the goal has ended, and when asked while it runs. */}
       <NextSteps goalId={goal.id} ended={!open} planning={goal.status === "planning"} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
       {/* The plan waiting for approval comes next, above the settings: it is what the operator decides on. */}
-      {goal.status === "planning" && <PlanLink goalId={goal.id} />}
       <IssuesPicker
         opened={picking}
         onClose={() => setPicking(false)}

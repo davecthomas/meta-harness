@@ -261,3 +261,16 @@ def test_the_decision_for_an_open_finding_fits_the_bar():
 
     assert found["says"] == "The review found 3 problems, and 1 is still open.", "a long finding stays on its card"
     assert found["buttons"][1]["label"] == "Approve with 1 open (up to $9)"
+
+
+def test_a_plan_is_marked_while_its_review_runs_so_nothing_asks_for_its_approval(monkeypatch):
+    from meta_harness.planner import plan_review
+
+    running = {"state": "running", "version": 2}
+    monkeypatch.setattr(plan_review, "rows", lambda goal_id: [{"state": "done", "version": 1}, running])
+
+    assert plan_review.marked("g-1", {"version": 2})["reviewing"] is True
+    assert plan_review.marked("g-1", {"version": 3})["reviewing"] is False, "a review of an earlier version"
+    assert plan_review.marked("g-1", None) is None
+    monkeypatch.setattr(plan_review, "rows", lambda goal_id: [{"state": "done", "version": 2}])
+    assert plan_review.marked("g-1", {"version": 2})["reviewing"] is False
