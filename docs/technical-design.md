@@ -4215,7 +4215,13 @@ says how many problems are open, and its buttons are Fix it, which sends the
 planner back for them (`POST /v1/goals/{id}/plan/review/fix`), and Approve
 with them open. A finding can be dismissed
 (`.../plan/review/findings/{id}/dismiss`). While a review runs the plan asks
-nothing. A review whose run ends with nothing recorded counts as failed, never
+nothing. Approving the plan (`POST /v1/goals/{id}/approve`) or saving an edit
+(`PUT /v1/goals/{id}/plan`) cancels a running review, since nobody will read
+it. The review keeps the findings it recorded, and its state reads `canceled`.
+A cancel that fails is logged, and the approval goes on. After an edit the
+plan's decision offers Review again, with the review's spend limit. Planning
+again leaves a running review alone, and the planner reviews the new version
+once it saves it. A review whose run ends with nothing recorded counts as failed, never
 as clean. A goal with reviews on gets no suggested fix, since the review
 covers a plan's gaps. `POST /v1/goals/{id}/plan/review` reviews any plan when
 an operator asks.

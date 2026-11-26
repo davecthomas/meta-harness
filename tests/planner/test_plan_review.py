@@ -354,3 +354,72 @@ def test_collect_reads_a_canceled_review_with_findings_as_canceled_and_does_not_
 
     assert collected["state"] == "canceled" and len(collected["findings"]) == 1
     assert _plan(client, goal)["planning_task_id"] is None
+
+
+def test_approving_while_a_review_runs_cancels_it_keeps_its_findings_and_approves(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store"), draft("api")])
+    task = _review(client, tasks, events, goal)
+    events.emit(
+        "review_submitted",
+        {"verdict": "changes", "summary": "One order problem.", "findings": [ORDER]},
+        task_id=task["id"],
+    )
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    assert tasks.tasks[task["id"]]["status"] == "canceled"
+    assert _goal(client, goal)["status"] == "active"
+    [review] = plan_review.rows(goal["id"])
+    assert review["state"] == "canceled" and [f["id"] for f in review["findings"]] == ["r1-1"]
+
+
+def test_approving_goes_on_when_the_review_cannot_be_canceled(world, monkeypatch):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store")])
+    _review(client, tasks, events, goal)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(plan_review, "cancel", broken)
+
+    approved = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+
+    assert approved.status_code == 200, approved.text
+    assert _goal(client, goal)["status"] == "active"
+
+
+def test_saving_an_edit_while_a_review_runs_cancels_it_and_offers_another(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    plan = _planned(client, events, tasks, goal, [draft("store"), draft("api")])["plan"]
+    task = _review(client, tasks, events, goal)
+
+    edited = client.put(f"/v1/goals/{goal['id']}/plan", json={"drafts": plan["drafts"][:1]}, headers=OPERATOR)
+
+    assert edited.status_code == 200, edited.text
+    assert tasks.tasks[task["id"]]["status"] == "canceled"
+    shown = edited.json()
+    assert shown["review"]["state"] == "canceled" and shown["plan"]["version"] == 2
+    again = [b for b in shown["decision"]["buttons"] if b["action"] == "review_plan"]
+    assert [b["label"] for b in again] == [f"Review again (up to {actions._usd(shown['review_usd'])})"]
+    assert again[0]["label"].startswith("Review again (up to $")
+
+
+def test_planning_again_while_a_review_runs_leaves_it_running(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store")])
+    task = _review(client, tasks, events, goal)
+    before = tasks.tasks[task["id"]]["status"]
+
+    replanned = client.post(f"/v1/goals/{goal['id']}/replan", json={"note": "Smaller tasks."}, headers=OPERATOR)
+
+    assert replanned.status_code == 202, replanned.text
+    assert tasks.tasks[task["id"]]["status"] == before != "canceled"
+    assert plan_review.rows(goal["id"])[-1]["state"] == "running"
+    assert replanned.json()["review"]["state"] == "running"
