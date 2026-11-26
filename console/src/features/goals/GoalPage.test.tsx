@@ -440,3 +440,28 @@ test("a goal being planned shows its plan where the operator lands, with the dec
   expect(screen.queryByRole("link", { name: /plan/i })).toBeNull();
   expect(screen.queryByTestId("planner-updates")).toBeNull();
 });
+
+test("a goal being planned has no narrative yet and no empty tasks section under its plan", async () => {
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", (url: string) => {
+    asked.push(url);
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
+    if (url.startsWith("/v1/goals/g-1/plan")) return respond({ goal_id: "g-1", status: "planning", plan: null, decision: { state: "drafting", says: "The planner is writing the plan.", buttons: [] } });
+    return respond({ ...goal("planning"), planned: true, issues: [] });
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<GoalPage />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  expect((await screen.findByTestId("plan-decision-says")).textContent).toBe("The planner is writing the plan.");
+  // Its summary is named, the story of its work waits for there to be work, and nothing says "no tasks".
+  expect(screen.getByText("Goal summary")).toBeTruthy();
+  expect(asked.some((url) => url.includes("/narrative"))).toBe(false);
+  expect(screen.queryByText("Issues and tasks")).toBeNull();
+  expect(screen.queryByText(/No tasks yet/)).toBeNull();
+});

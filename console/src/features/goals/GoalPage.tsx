@@ -288,6 +288,8 @@ export function GoalPage() {
         title={<TitleField {...editable} />}
         description={
           <Stack gap={6}>
+            {/* Named, so it is told apart from the narrative under it: this is what the goal is for. */}
+            <Text size="xs" fw={650} c="dimmed" tt="uppercase" style={{ letterSpacing: 0.4 }}>Goal summary</Text>
             <DescriptionField {...editable} />
             {/* While the goal can still change: the rewritten description is saved as the goal's at once. */}
             {open && (
@@ -361,6 +363,12 @@ export function GoalPage() {
         }
       />
       <ErrorAlert error={error} />
+      {/* The goal's introduction: its summary above, where it was planned from, and the story of its work so
+          far. A goal still being planned has no work to tell of, and its summary already says what it is for. */}
+      {goal.spec && <SpecView goalId={goal.id} spec={goal.spec} />}
+      {goal.status !== "planning" && (
+        <Narrative title="Narrative so far" path={`/v1/goals/${goal.id}/narrative`} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
+      )}
       {/* An ended goal says what it left open in its tracker, with the button that closes it. */}
       {!open && <LeftOpenIssues goalId={goal.id} tracker={trackerTitle(goal.tracker ?? "github")} onClosed={() => void Promise.all([load(), loadProgress()])} />}
       <BudgetAlert goal={goal} spent={spentNow} onResumed={() => void act(async () => undefined)} />
@@ -393,9 +401,7 @@ export function GoalPage() {
       />
       {/* The goal's settings, folded away once it has work to show: the board is what the page is for, and
           one line says what the settings are. Open on a goal with no issues yet, which is when they are set. */}
-      {goal.spec && <SpecView goalId={goal.id} spec={goal.spec} />}
       <AlreadyDone goalId={goal.id} tasks={Object.values(tasks)} watch={goal.status} />
-      <Narrative title="Narrative" path={`/v1/goals/${goal.id}/narrative`} watch={`${goal.status}:${Object.values(tasks).map((t) => t.status).join(",")}`} />
       <Paper withBorder p="sm" mb="md" data-testid="goal-settings">
         <Group justify="space-between" wrap="nowrap" gap="md">
           <Text size="sm" c="dimmed" lineClamp={1} data-testid="goal-settings-summary" style={{ flex: 1, minWidth: 0 }}>
@@ -487,6 +493,10 @@ export function GoalPage() {
       )}
 
       <div id="goal-issues" />
+      {/* A goal being planned with no issue yet lists its tasks in the plan above: a section here saying there are
+          none contradicted it. */}
+      {!(goal.status === "planning" && issues.length === 0) && (
+      <>
       <SectionTitle
         right={
           issues.length > 0 && (
@@ -590,6 +600,8 @@ export function GoalPage() {
         </Empty>
       )}
       </ListBox>
+      </>
+      )}
       <div ref={shown.sentinel} />
     </>
   );

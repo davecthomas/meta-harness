@@ -118,7 +118,7 @@ test("open questions show a few and count the rest", () => {
   const gaps = Array.from({ length: 8 }, (_, i) => `Question ${i + 1}?`);
   shown(<OpenQuestions gaps={gaps} />);
   const part = screen.getByTestId("plan-questions");
-  expect(part.textContent).toContain("Worth weighing before you approve");
+  expect(part.textContent).toContain("Weigh this first");
   expect(within(part).queryByText(`Question ${SHOWN_BEFORE_COUNTING + 1}?`)).toBeNull();
   fireEvent.click(within(part).getByRole("button", { name: "Show the other 3" }));
   expect(within(part).getByText("Question 8?")).toBeTruthy();
@@ -195,4 +195,31 @@ test("a review that is running, failed or found nothing says so, and one that fa
   expect(said({ state: "failed" })).toBe("The review by gpt-6-sol did not finish, so it says nothing about the plan.");
   expect(said({})).toBe("gpt-6-sol looked for problems and found none.");
   expect(said({ state: "partial" }, [finding("r1-1")])).toBe("gpt-6-sol found 1 problem: 0 fixed, 1 open. It stopped before it finished.");
+});
+
+test("what to weigh before approving is in the decision's own box, over its buttons", () => {
+  shown(<DecisionBar decision={READY} busy={false} onAct={() => undefined} gaps={["No task covers the export."]} />);
+  const bar = screen.getByTestId("plan-decision");
+  const weigh = within(bar).getByTestId("plan-questions");
+  const approve = within(bar).getAllByRole("button")[0];
+  expect(weigh.textContent).toContain("No task covers the export.");
+  // Read before the button is reached: it comes first in the box.
+  expect(weigh.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("a plan still being worked on shows nothing to weigh: there is nothing to press yet", () => {
+  shown(<DecisionBar decision={{ state: "improving", says: "gpt-6-sol is checking the plan for problems.", buttons: [] }} busy={false} onAct={() => undefined} gaps={["No task covers the export."]} />);
+  expect(screen.queryByTestId("plan-questions")).toBeNull();
+});
+
+test("when the plan's changes are the review's own fixes, the review says them and nothing repeats it", async () => {
+  const { changedByReview, reviewMadeTheChanges } = await import("./PlanPage");
+  const review = { counts: { found: 1, fixed: 1, open: 0 } };
+  const changes = { from_version: 1, lines: [], diff: { reworded: [{ id: "a", title: "A" }], added: [] } };
+  const plan = { review, changes, suggestion: null, applied_fix: null } as never;
+  expect(reviewMadeTheChanges(plan)).toBe(true);
+  expect(changedByReview(plan)).toBe(" The fix reworded 1 task.");
+  // A replan with no review, or a fix the planner applied itself, is not the review's: its own part says it.
+  expect(reviewMadeTheChanges({ review: null, changes } as never)).toBe(false);
+  expect(changedByReview({ review, changes, applied_fix: { from_version: 1, fixes: [], changes: [] } } as never)).toBe("");
 });
