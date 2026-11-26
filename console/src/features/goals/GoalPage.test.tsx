@@ -465,3 +465,40 @@ test("a goal being planned has no narrative yet and no empty tasks section under
   expect(screen.queryByText("Issues and tasks")).toBeNull();
   expect(screen.queryByText(/No tasks yet/)).toBeNull();
 });
+
+test("a review's open problems are in the decision's box, over Fix and Approve, and not said again under it", async () => {
+  const finding = { id: "f-1", kind: "missing_work", severity: "blocking", status: "open", says: "The new event is not in the schema snapshot.", change: "Add it to registered_schemas.json.", tasks: ["dismiss-api"] };
+  const plan = {
+    goal_id: "g-1",
+    status: "planning",
+    plan: { version: 2, source: "planner", created_at: "2026-11-25T12:00:00Z", drafts: [{ ref: "draft:1", title: "Dismiss a gap", body: "Add it.", repo: "o/r", depends_on: [], labels: [] }], gaps: [], invalid: [], issues: [], items: [] },
+    decision: { state: "ready", says: "The review found 1 problem, and 1 is still open.", buttons: [{ action: "fix_findings", label: "Fix it (up to $4)" }, { action: "approve_plan", label: "Approve with 1 open" }] },
+    glance: { tasks: 1, unsized: 0, repos: ["o/r"], may_spend_usd: "3", budget_usd: "100", can_start: 1, open_questions: 0 },
+    changes: null,
+    review: { reviewer: "harness:pi-review/openai:gpt-6-sol", model: "gpt-6-sol", rounds: 1, state: "done", version: 2, task_id: "t-r", summary: "", findings: [finding], counts: { found: 1, fixed: 0, open: 1 } },
+  };
+  vi.stubGlobal("fetch", (url: string) => {
+    if (url.startsWith("/v1/tasks")) return respond({ tasks: [], total: 0 });
+    if (url.startsWith("/v1/goals/g-1/plan")) return respond(plan);
+    return respond({ ...goal("planning"), planned: true, adversarial_review: true, issues: [] });
+  });
+  render(
+    <MantineProvider theme={theme}>
+      <MemoryRouter initialEntries={["/goals/g-1"]}>
+        <Routes>
+          <Route path="/goals/:goalId" element={<GoalPage />} />
+        </Routes>
+      </MemoryRouter>
+    </MantineProvider>,
+  );
+  const problems = await screen.findByTestId("decision-findings");
+  const box = screen.getByTestId("plan-decision");
+  expect(box.contains(problems)).toBe(true);
+  expect(problems.textContent).toContain("The new event is not in the schema snapshot.");
+  // Read before the buttons it is about.
+  const fix = within(box).getByRole("button", { name: "Fix it (up to $4)" });
+  expect(problems.compareDocumentPosition(fix) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // Said once: the review's own section has its summary, not the problem again.
+  expect(screen.getAllByText("The new event is not in the schema snapshot.")).toHaveLength(1);
+  expect(screen.getByTestId("plan-glance").textContent).toBe("1 task in r · may spend up to $3 of your $100 budget · 1 can start at once");
+});

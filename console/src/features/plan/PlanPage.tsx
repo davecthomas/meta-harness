@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Alert, Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, SimpleGrid, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanAsk, type PlanFinding, type PlanGlance, type PlanVersion } from "../../api";
 import { ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
@@ -79,7 +79,7 @@ export function DecisionBar({ decision, onAct, busy, gaps = [], extra }: { decis
   return (
     // Kept in view as the page scrolls only while it is one line: a taller box would cover what is read under it.
     <Paper withBorder p="md" radius="md" shadow="sm" data-testid="plan-decision" style={weighFirst ? undefined : { position: "sticky", top: "var(--app-shell-header-height, 72px)", zIndex: 5 }}>
-      {weigh.length === 0 ? (
+      {!weighFirst ? (
         <Group justify="space-between" wrap="wrap" gap="md">{says}{buttons}</Group>
       ) : (
         <Stack gap="sm">
@@ -93,34 +93,20 @@ export function DecisionBar({ decision, onAct, busy, gaps = [], extra }: { decis
   );
 }
 
-function Tile({ label, value, note, warn = false }: { label: string; value: string; note?: string; warn?: boolean }) {
-  return (
-    <Paper withBorder p="sm" radius="md" data-testid="plan-tile">
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{label}</Text>
-      <Text size="xl" fw={650} lh={1.2}>{value}</Text>
-      {note && <Text size="xs" c={warn ? "red" : "dimmed"}>{note}</Text>}
-    </Paper>
-  );
-}
-
-// The plan's figures, each a tile: read at a glance, before any task is.
+// The plan's figures in one line under the decision: what it may spend, how many tasks and where, how many can
+// start at once. Big tiles broke the read from the decision to what the decision is about.
 export function Glance({ glance }: { glance: PlanGlance }) {
-  const repos = glance.repos.length === 1 ? glance.repos[0].split("/").pop()! : String(glance.repos.length);
+  const repos = glance.repos.length === 1 ? glance.repos[0].split("/").pop()! : `${glance.repos.length} repos`;
   const known = glance.may_spend_usd !== null;
   const over = known && !!glance.budget_usd && Number(glance.may_spend_usd) > Number(glance.budget_usd);
-  const budget = !glance.budget_usd ? "no budget set" : over ? `more than your ${dollars(glance.budget_usd)} budget` : `of your ${dollars(glance.budget_usd)} budget`;
+  const budget = !glance.budget_usd ? "" : over ? `, more than your ${dollars(glance.budget_usd)} budget` : ` of your ${dollars(glance.budget_usd)} budget`;
+  const parts = [
+    `${glance.tasks} task${glance.tasks === 1 ? "" : "s"}${glance.unsized ? ` (${glance.unsized} not sized yet)` : ""} in ${repos}`,
+    known ? `may spend up to ${dollars(glance.may_spend_usd)}${budget}` : `spend known once the tasks are sized${glance.budget_usd ? `; budget ${dollars(glance.budget_usd)}` : ""}`,
+    `${glance.can_start} can start at once`,
+  ];
   return (
-    <SimpleGrid cols={{ base: 2, sm: 3, lg: 5 }} spacing="sm" data-testid="plan-glance">
-      <Tile label="Tasks" value={String(glance.tasks)} note={glance.unsized ? `${glance.unsized} not sized yet` : undefined} />
-      <Tile label={glance.repos.length === 1 ? "Repo" : "Repos"} value={repos} />
-      {known ? (
-        <Tile label="May spend up to" value={dollars(glance.may_spend_usd)} note={budget} warn={over} />
-      ) : (
-        <Tile label="Budget" value={glance.budget_usd ? dollars(glance.budget_usd) : "None set"} note="what the tasks may spend is known once they are sized" />
-      )}
-      <Tile label="Can start at once" value={String(glance.can_start)} />
-      {glance.open_questions > 0 && <Tile label="To weigh first" value={String(glance.open_questions)} warn />}
-    </SimpleGrid>
+    <Text size="sm" c={over ? "red" : "dimmed"} data-testid="plan-glance">{parts.join(" · ")}</Text>
   );
 }
 
@@ -244,7 +230,7 @@ function FindingCard({ finding, busy, onDismiss }: { finding: PlanFinding; busy:
 // The plan's adversarial review: a second model's attempt to find what is wrong with the plan. One line says
 // what it found; only the problems still open are shown in full, and past a few they are grouped by kind. What
 // the planner fixed and what was only advice are counts that open.
-export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; onChanged: () => void }) {
+export function ReviewPart({ plan, goal, onChanged, openInDecision = false }: { plan: Plan; goal: Goal; onChanged: () => void; openInDecision?: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -310,8 +296,9 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
       <Stack gap="sm">
         <Text size="sm" data-testid="plan-review-says">{said}</Text>
         <ErrorAlert error={error} />
-        {!grouped && still.map((f) => <FindingCard key={f.id} finding={f} busy={busy} onDismiss={() => void run(() => api.dismissPlanFinding(goal.id, f.id))} />)}
-        {grouped && (
+        {/* Open findings are in the decision's box when the decision is about them: not said twice. */}
+        {!openInDecision && !grouped && still.map((f) => <FindingCard key={f.id} finding={f} busy={busy} onDismiss={() => void run(() => api.dismissPlanFinding(goal.id, f.id))} />)}
+        {!openInDecision && grouped && (
           <Group gap={6} data-testid="plan-finding-kinds">
             {kinds.map((kind) => (
               <UnstyledButton key={kind} onClick={() => setOpen(open === kind ? null : kind)} aria-expanded={open === kind}>
@@ -322,7 +309,7 @@ export function ReviewPart({ plan, goal, onChanged }: { plan: Plan; goal: Goal; 
             ))}
           </Group>
         )}
-        {grouped && open && kinds.includes(open) && still.filter((f) => (f.kind || "other") === open).map((f) => <FindingCard key={f.id} finding={f} busy={busy} onDismiss={() => void run(() => api.dismissPlanFinding(goal.id, f.id))} />)}
+        {!openInDecision && grouped && open && kinds.includes(open) && still.filter((f) => (f.kind || "other") === open).map((f) => <FindingCard key={f.id} finding={f} busy={busy} onDismiss={() => void run(() => api.dismissPlanFinding(goal.id, f.id))} />)}
         {(fixed.length > 0 || advice.length > 0) && (
           <Group gap={6}>
             {lists.filter(([, , items]) => items.length > 0).map(([key, label]) => (
@@ -426,6 +413,20 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
     return () => window.clearTimeout(timer);
   }, [asked, ready, setSearch]);
 
+  const dismissFinding = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.dismissPlanFinding(goalId, id);
+      window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+      void reloadNeeds();
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : String(err)}. Press Not a problem again to retry.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reviewAgainNow = async () => {
     setBusy(true);
     setError(null);
@@ -474,11 +475,14 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
       label={`Add the ${newTasks === 1 ? "new task" : `${newTasks} new tasks`} to ${trackerTitle(goal.tracker ?? "github")} as ${newTasks === 1 ? "an issue" : "issues"}`}
     />
   ) : undefined;
+  const openFindings = (plan?.review?.findings ?? []).filter((f) => f.status === "open" && f.severity === "blocking");
+  const aboutFindings = planning && !!decision?.buttons.some((b) => b.action === "fix_findings") && openFindings.length > 0;
   const reviewFirst = plan?.review?.state === "running" || (plan?.review?.counts.open ?? 0) > 0;
   const review = plan?.plan ? (
     <ReviewPart
       plan={plan}
       goal={goal}
+      openInDecision={aboutFindings}
       onChanged={() => {
         onChanged();
         window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
@@ -500,7 +504,19 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
       </Group>
     </Alert>
   ) : null;
-  const inBox = reviewAgain || trackChoice ? <Stack gap="sm">{reviewAgain}{trackChoice}</Stack> : undefined;
+  const findingsHere = aboutFindings ? (
+    <Stack gap="xs" data-testid="decision-findings">
+      {openFindings.map((f) => (
+        <FindingCard
+          key={f.id}
+          finding={f}
+          busy={busy}
+          onDismiss={() => void dismissFinding(f.id)}
+        />
+      ))}
+    </Stack>
+  ) : null;
+  const inBox = findingsHere || reviewAgain || trackChoice ? <Stack gap="sm">{findingsHere}{reviewAgain}{trackChoice}</Stack> : undefined;
   return (
     <Stack gap="xs" mb="md" data-testid="plan-body">
       <ErrorAlert error={error} />

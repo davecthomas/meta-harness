@@ -1,9 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { theme } from "../../theme";
 import { PlanningView } from "./PlanningView";
 import { reasonTarget } from "./staging";
+
+// The Similar goals row lists the embedding models it picks from: answered here, so no read is left retrying
+// after a test ends.
+beforeEach(() => {
+  vi.stubGlobal("fetch", () =>
+    Promise.resolve(new Response(JSON.stringify({ models: [{ name: "openai:text-embedding-3-small" }] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const DOC = { candidate: "harness:pi-plan/claude:claude-opus-5-5", max_usd: "3.00", goals: "all", max_issues: 60, issue_chars: 4000 };
 
