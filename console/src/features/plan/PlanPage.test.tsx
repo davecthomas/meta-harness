@@ -71,10 +71,9 @@ test("a plan that is being written asks nothing", () => {
   expect(within(screen.getByTestId("plan-decision")).queryAllByRole("button")).toHaveLength(0);
 });
 
-test("the plan's figures are tiles, with what it may spend said as an upper bound", () => {
+test("the plan's figures are one line, with what it may spend said as an upper bound", () => {
   shown(<Glance glance={{ tasks: 44, repos: ["davecthomas/meta-harness"], may_spend_usd: "62.00", budget_usd: "100.00", can_start: 3, open_questions: 2, unsized: 1 }} />);
-  const tiles = screen.getAllByTestId("plan-tile").map((t) => t.textContent);
-  expect(tiles).toEqual(["Tasks441 not sized yet", "Repometa-harness", "May spend up to$62of your $100 budget", "Can start at once3", "To weigh first2"]);
+  expect(screen.getByTestId("plan-glance").textContent).toBe("44 tasks (1 not sized yet) in meta-harness · may spend up to $62 of your $100 budget · 3 can start at once");
 });
 
 const PLAN = {
@@ -104,9 +103,7 @@ test("what changed leads with why, then counts each kind, and lists a kind's tas
 
 test("a plan with tasks not sized yet names no figure it would have to guess", () => {
   shown(<Glance glance={{ tasks: 60, repos: ["davecthomas/meta-harness"], may_spend_usd: null, budget_usd: "100.00", can_start: 8, open_questions: 3, unsized: 60 }} />);
-  const tiles = screen.getAllByTestId("plan-tile").map((t) => t.textContent);
-  expect(tiles[0]).toBe("Tasks6060 not sized yet");
-  expect(tiles[2]).toBe("Budget$100what the tasks may spend is known once they are sized");
+  expect(screen.getByTestId("plan-glance").textContent).toBe("60 tasks (60 not sized yet) in meta-harness · spend known once the tasks are sized; budget $100 · 8 can start at once");
 });
 
 test("a fix that waits is shown by what accepting it would change, apart from older changes", () => {
@@ -259,4 +256,11 @@ test("a canceled review shows its state and the findings it recorded, and offers
   expect(within(part).getByTestId("plan-review-says").textContent).toContain("was canceled");
   expect(within(part).getByText("Problem r1-1.")).toBeTruthy();
   expect(within(part).getByRole("button", { name: "Review again (up to $4.00)" })).toBeTruthy();
+});
+
+test("what the decision holds besides its sentence shows over the buttons even with nothing to weigh", () => {
+  shown(<DecisionBar decision={READY} busy={false} onAct={() => undefined} extra={<span data-testid="held">Add the 2 new tasks to Jira</span>} />);
+  const bar = screen.getByTestId("plan-decision");
+  const held = within(bar).getByTestId("held");
+  expect(held.compareDocumentPosition(within(bar).getAllByRole("button")[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
