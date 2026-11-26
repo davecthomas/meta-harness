@@ -11,7 +11,7 @@ import { IssueDecisions, OrderOfWork, planSentence, tasksOf } from "./PlanReview
 import { APPROVE_PLAN, FixFacts, PLAN_CHANGED, REPLAN } from "./PlannerUpdates";
 import { reloadNeeds } from "../overview/needsYou";
 import { useUnsavedChanges } from "../../components/UnsavedChanges";
-import { ErrorAlert, SectionTitle, when } from "../../components/ui";
+import { ErrorAlert, SectionTitle, SubTitle, when } from "../../components/ui";
 
 const CHECKS = /^##\s+acceptance checks\s*$/im;
 const REFRESH_MS = 5000;
@@ -521,20 +521,20 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
           )}
           {tasks.length > 1 && !embedded && (
             <div>
-              <Text fw={600} size="sm" mb={4}>The order of work</Text>
+              <SubTitle>The order of work</SubTitle>
               <OrderOfWork tasks={tasks} />
             </div>
           )}
           {issues.length > 0 && (
             <div>
-              <Text fw={600} size="sm">The goal's issues</Text>
+              <SubTitle>The goal's issues</SubTitle>
               <Text size="sm" c="dimmed" mb={6}>Change any decision before you approve.</Text>
               <IssueDecisions issues={issues} items={items} drafts={base} onChange={drafting ? undefined : setEditedItems} />
             </div>
           )}
           {(drafts.length > 0 || issues.length > 0) && (
             <div>
-              <Text fw={600} size="sm">New tasks</Text>
+              <SubTitle>New tasks</SubTitle>
               <Text size="sm" c="dimmed">
                 {drafts.length
                   ? "Written by the planner. Created when you approve."

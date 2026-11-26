@@ -2,6 +2,7 @@ import { Badge, Group, Paper, Progress, Stack, Text } from "@mantine/core";
 import { IconCircle, IconCircleCheck, IconLoader2, IconPlayerPause } from "@tabler/icons-react";
 import type { MhEvent } from "../../api";
 import { ago } from "./reviewing";
+import { SubTitle } from "../../components/ui";
 
 export interface PlanStep {
   step: string;
@@ -48,7 +49,7 @@ export function Plan({ events, running = false }: { events: MhEvent[]; running?:
   return (
     <Paper withBorder p="sm" mb="md" data-testid="plan">
       <Group justify="space-between" mb={4}>
-        <Text size="sm" fw={600}>Plan</Text>
+        <SubTitle>Plan</SubTitle>
         <Badge size="xs" variant="light">{done} of {steps.length} done</Badge>
       </Group>
       <Text size="xs" c="dimmed" mb={6} data-testid="plan-standing">{planStanding(events, running)}</Text>

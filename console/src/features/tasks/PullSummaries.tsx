@@ -1,6 +1,7 @@
 import { Badge, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import type { MhEvent } from "../../api";
 import { provenance, summariesOf, type PullSummary, type SummarySource } from "./summaries";
+import { SubTitle } from "../../components/ui";
 
 // A summary's source as a badge, with what that means on hover.
 export function SummaryBadge({ source, size = "sm" }: { source: SummarySource; size?: "xs" | "sm" }) {
@@ -35,7 +36,7 @@ export function PullSummaries({ events }: { events: MhEvent[] }) {
   if (!summaries.length) return null;
   return (
     <Stack gap="xs" mb="md" data-testid="pull-summaries">
-      <Text size="sm" fw={600}>The pull request's description</Text>
+      <SubTitle>The pull request's description</SubTitle>
       {summaries.map((s) => <SummaryCard key={s.round} summary={s} />)}
     </Stack>
   );

@@ -5,6 +5,7 @@ import { Alert, Anchor, Button, Group, List, Stack, Text } from "@mantine/core";
 import { IconSparkles } from "@tabler/icons-react";
 import { api } from "../../api";
 import type { EnrichRequest, GoalProposal } from "./api";
+import { SubTitle } from "../../components/ui";
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -96,7 +97,7 @@ export function ImproveGoal({
       )}
       {done && done.questions.length > 0 && (
         <Stack gap={4} data-testid="improve-questions">
-          <Text size="sm" fw={600}>Open questions</Text>
+          <SubTitle>Open questions</SubTitle>
           <Text size="xs" c="dimmed">Only you can answer these. Write the answers into the description.</Text>
           <List size="sm" spacing={2}>
             {done.questions.map((q, i) => <List.Item key={i}>{q}</List.Item>)}

@@ -4,6 +4,7 @@ import { Anchor, Button, Group, Paper, Stack, Text, ThemeIcon } from "@mantine/c
 import { IconCheck } from "@tabler/icons-react";
 import { api } from "../../api";
 import { useAdmin } from "../../components/Role";
+import { SubTitle } from "../../components/ui";
 
 // What a new deployment needs before any work runs, in order, each step ticked once it is done and linking to
 // where it is done. It shows on the Overview until every step is done, then never again. Nothing else in the
@@ -79,7 +80,7 @@ export function GettingStarted() {
   const next = steps.find((s) => !s.done)!;
   return (
     <Paper p="lg" mb="lg" data-testid="getting-started" style={{ borderColor: "var(--mantine-primary-color-filled)" }}>
-      <Text fw={650} mb={4}>Getting started</Text>
+      <SubTitle>Getting started</SubTitle>
       <Text size="sm" c="dimmed" mb="md">
         {steps.filter((s) => s.done).length} of {steps.length} done. Nothing runs until these are, in this order.
       </Text>
