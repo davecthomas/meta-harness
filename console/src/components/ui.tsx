@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Tooltip, Alert, Anchor, Badge, Button, Code, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Tooltip, Alert, Anchor, Badge, Button, Code, Collapse, Group, Stack, Table, Text, Title } from "@mantine/core";
 import { issueUrl } from "../api";
 import { SIGNED_OUT } from "../client";
 import { statusWords } from "./status";
@@ -27,6 +27,22 @@ export function SectionTitle(props: { children: ReactNode; right?: ReactNode }) 
       <Title order={4}>{props.children}</Title>
       {props.right}
     </Group>
+  );
+}
+
+// A long list in a box of its own: it scrolls inside the box, and folds away, so what comes after it on the
+// page is not pushed out of reach. what: the list's name, as the fold says it ("the 12 tasks").
+export function ScrollFold({ what, children }: { what: string; children: ReactNode }) {
+  const [folded, setFolded] = useState(false);
+  return (
+    <div data-testid="scroll-fold">
+      <Anchor component="button" type="button" size="sm" mb={6} onClick={() => setFolded((now) => !now)} aria-expanded={!folded}>
+        {folded ? `Show ${what}` : `Hide ${what}`}
+      </Anchor>
+      <Collapse expanded={!folded}>
+        <div className="mh-scroll" role="region" aria-label={what} tabIndex={0}>{children}</div>
+      </Collapse>
+    </div>
   );
 }
 

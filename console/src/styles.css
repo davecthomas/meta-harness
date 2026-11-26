@@ -87,3 +87,7 @@
 button:not(:disabled):hover > .mh-choice { background: var(--mantine-color-default-hover); border-color: var(--mantine-primary-color-filled); }
 .mh-choice[data-chosen] { border-color: var(--mantine-primary-color-filled); box-shadow: inset 0 0 0 1px var(--mantine-primary-color-filled); }
 button:focus-visible > .mh-choice { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 2px; }
+
+/* A long list in a box of its own (ui.tsx, ScrollFold): it scrolls inside, so the page under it stays near. */
+.mh-scroll { max-height: min(62vh, 640px); overflow-y: auto; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: var(--mantine-spacing-sm); }
+.mh-scroll:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 2px; }

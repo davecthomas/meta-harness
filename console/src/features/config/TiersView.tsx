@@ -64,9 +64,7 @@ export function TiersView({ staging: s, profiles, models, classifiers }: { stagi
   return (
     <>
       <Text size="sm" c="dimmed" mb="md" maw={860}>
-        A task is sent to a tier by how hard it looks, and tried on that tier's candidates in order: each is a harness
-        profile (the agent's tools and limits) with a model. Tiers go from the easiest work to the hardest, which is
-        the order "Escalate one tier up" follows, so their order matters.
+        Tiers go from the easiest work to the hardest. A task is tried on its tier's candidates in order.
       </Text>
       <Facts
         items={[

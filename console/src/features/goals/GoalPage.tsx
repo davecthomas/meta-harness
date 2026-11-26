@@ -33,7 +33,7 @@ import { AssigneeField, AutonomyEdit, DescriptionField, LabelEdit, ParallelEdit,
 import { HeldActions, StrictIssuesEdit } from "./sizing";
 import { ProvenanceEdit, provenanceSummary, type ProvenanceGoal } from "./provenanceHeaders";
 import { useEventStream, useInfinite } from "../../hooks";
-import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, SectionTitle, StatusBadge, when } from "../../components/ui";
+import { DataTable, Empty, ErrorAlert, Facts, IssueLink, PageHeader, PrLink, ScrollFold, SectionTitle, StatusBadge, when } from "../../components/ui";
 import { ConfirmButton } from "../../components/ConfirmButton";
 import { afterFailedChange } from "../../client";
 
@@ -55,6 +55,11 @@ function Refreshed({ at, error }: { at: number | null; error: string | null }) {
 
 // How the note of a refresh that failed starts, so the next one that works can take it away.
 const REFRESH_FAILED = "The goal could not be refreshed";
+
+// The goal's issues in a box that scrolls and folds once there are some; an empty goal's one line needs no box.
+function ListBox({ fold, what, children }: { fold: boolean; what: string; children: ReactNode }) {
+  return fold ? <ScrollFold what={what}>{children}</ScrollFold> : <>{children}</>;
+}
 
 export function GoalPage() {
   const { goalId = "" } = useParams();
@@ -508,6 +513,7 @@ export function GoalPage() {
       {progress && <GoalFailures issues={progress} tasks={tasks} ended={!open} onChanged={() => void Promise.all([load(), loadProgress()])} />}
       {progress && progress.length > 0 && <GoalProgress issues={progress} spend={spend} budget={goal.max_usd} goal={goal} onSpend={() => setSpending(true)} />}
       <GoalSpend goalId={goal.id} goalName={goalTitle(goal)} opened={spending} onClose={() => setSpending(false)} />
+      <ListBox fold={issues.length > 0} what={issues.length === 1 ? "the issue" : `the ${issues.length} issues`}>
       {issues.length > 0 && progress && shownView === "board" ? (
         <GoalBoard
           issues={progress}
@@ -583,6 +589,7 @@ export function GoalPage() {
           No issues yet. {goal.label ? <>Label an open issue <Badge variant="outline" tt="none" radius="sm">{goal.label}</Badge> in one of the goal's repos, or pick issues with Add issues.</> : "Pick issues with Add issues."} The planner takes them in within a minute, or now with Take in issues now.
         </Empty>
       )}
+      </ListBox>
       <div ref={shown.sentinel} />
     </>
   );

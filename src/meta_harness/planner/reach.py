@@ -142,6 +142,28 @@ async def accounts(identity: str, transport: httpx.AsyncBaseTransport | None = N
 
 
 _tasks: set[asyncio.Task] = set()
+# How old a held list may be and still be answered from while it is read again: past this, the read is waited for.
+OFFER_STALE_SECONDS = 24 * 3600.0
+
+
+async def offered(identity: str, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
+    """The operator's reachable repos for a picker, at once when a list is held: one past its time is answered
+    from as it is and read again behind the answer, so a form does not wait on GitHub each time. With none
+    held, or one older than a day, the read is waited for.
+
+    Raises:
+        github_user.GitHubUserError: As reachable does.
+    """
+    held = _held.get(identity)
+    age = time.time() - held[0] if held else None
+    if held is None or age is None or age >= OFFER_STALE_SECONDS:
+        return await reachable(identity, False, transport)
+    if age >= hold_seconds() and identity not in _reading:
+        _reading.add(identity)
+        task = asyncio.create_task(_read_behind(identity, transport))
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+    return _answer(identity, held, False, None)
 
 
 def _owner(repo: dict[str, Any]) -> str:

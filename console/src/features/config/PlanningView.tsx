@@ -108,9 +108,6 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
               readOnly={s.readOnly}
               onCommit={(on) => s.stage(["track_new_tasks"], on)}
             />
-            <Text size="sm" c="dimmed">
-              You can change it for any plan.
-            </Text>
           </Stack>,
         ],
         [
@@ -181,9 +178,6 @@ export function PlanningView({ staging: s, profiles, models }: { staging: Stagin
                 onCommit={(v) => s.stage(["updates", "max_per_goal"], v ?? undefined)}
               />
             </Group>
-            <Text size="sm" c="dimmed">
-              One short model call each time a goal moves, none while it stands still.
-            </Text>
           </Stack>,
         ],
         [

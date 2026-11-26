@@ -33,7 +33,7 @@ const names = (value: any) => (value as { name: string }[]).map((t) => t.name);
 
 test("a tier is added last with a name no other has, and is marked not saved", () => {
   const staged = show({ ...ROUTER, tiers: [...ROUTER.tiers, { name: "tier-4", models: [] }] });
-  expect(screen.getByText(/tried on that tier's candidates in order/)).toBeTruthy();
+  expect(screen.getByText(/tried on its tier's candidates in order/)).toBeTruthy();
   expect(screen.getByTestId("tier-controls-tier-4").textContent).toContain("not saved");
   expect(screen.getByTestId("tier-controls-simple").textContent).not.toContain("not saved");
 
