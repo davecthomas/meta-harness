@@ -152,8 +152,8 @@ model calls.
 | The comparison, `POST /v1/goals/similar` | Built (`planner/similar_goals.py`, `planner/embeddings.py`) |
 | The panel and the question at save | Built (`console/src/features/goals/SimilarGoals.tsx`) |
 | The record of each answer | Built: `goal_similarity_judged`, and `GET /v1/goals/similar/shown` |
-| The Performance table | Not built |
-| The settings in Configuration, Planning | Changed through Advanced: JSON. The form has no group for them yet |
+| The Performance table | Built (`console/src/features/performance/SimilarShown.tsx`) |
+| The settings in Configuration, Planning | Built (`SimilarGoalsSettings.tsx`), the model picked from `GET /v1/config/embedding-models` |
 
 Where it differs from the text above:
 

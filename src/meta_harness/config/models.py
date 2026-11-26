@@ -16,6 +16,33 @@ from ai_api_unified.pricing.pricing_registry import DICT_MODEL_INFO
 ENGINE_FOR_PROVIDER = {"anthropic": "claude", "openai": "openai-responses", "google": "google-gemini"}
 
 
+# The HTTP Gateway's embeddings engine for each registry provider that has one.
+EMBEDDING_ENGINE_FOR_PROVIDER = {"openai": "openai", "google": "google-gemini", "voyage": "voyage"}
+
+
+def embedding_catalog() -> list[dict[str, Any]]:
+    """Every priced embedding model, as `<engine>:<model>` with its lifecycle status, by engine then name: what
+    the similar-goals setting is picked from."""
+    found = []
+    for (provider, model), info in DICT_MODEL_INFO.items():
+        engine = EMBEDDING_ENGINE_FOR_PROVIDER.get(provider)
+        rates = info.pricing.token_rates if info.pricing is not None else None
+        # An embedding model has an input price and no output price; an image model is priced another way.
+        embeds = "embed" in model.lower() or provider == "voyage"
+        if not engine or rates is None or rates.output_per_1m is not None or not embeds or "/" in model:
+            continue
+        found.append(
+            {
+                "name": f"{engine}:{model}",
+                "engine": engine,
+                "model": model,
+                "status": info.status.value,
+                "input_per_1m": str(rates.input_per_1m),
+            }
+        )
+    return sorted(found, key=lambda m: (m["engine"], m["model"]))
+
+
 def catalog() -> list[dict[str, Any]]:
     """Every priced completions model, as `<engine>:<model>` with its lifecycle status, by engine then name."""
     found = []

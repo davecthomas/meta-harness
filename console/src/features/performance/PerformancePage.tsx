@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Alert, Anchor, Card, Center, Group, Loader, MultiSelect, NativeSelect, Paper, SegmentedControl, SimpleGrid, Stack, Table, Text, TextInput } from "@mantine/core";
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react";
 import { api, type CostFilter, type Costs } from "../../api";
+import { SimilarShown } from "./SimilarShown";
 import { DataTable, Empty, ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
 import { GoalCosts } from "./GoalCosts";
 import { KeyNumbers } from "./KeyNumbers";
@@ -361,6 +362,7 @@ export function PerformancePage() {
           )}
         </>
       )}
+      <SimilarShown />
     </>
   );
 }
