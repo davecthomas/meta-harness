@@ -1324,12 +1324,15 @@ def _findings(findings: list[dict], ids: bool = False) -> list[str]:
 def _checks_rule(request: LoopPromptRequest) -> str:
     """What a review does about the acceptance checks. A review starts only once the code host's checks have
     passed at the reviewed commit, so running them all again spends turns to learn what is known."""
+    from meta_harness.run_service import base_checks
+
+    on_base = base_checks.said_to_review(request.base_failing)
     if not request.passed_checks:
-        return "Run each acceptance check with the bash tool."
+        return "Run each acceptance check with the bash tool." + on_base
     return (
         f"These checks passed on the code host at the commit you are reviewing: {', '.join(request.passed_checks)}. "
         "Do not run them again, and do not install the project's dependencies to do so. Run a command yourself "
-        "only to confirm a finding, or for an acceptance check above that none of those checks covers."
+        "only to confirm a finding, or for an acceptance check above that none of those checks covers." + on_base
     )
 
 

@@ -2214,5 +2214,38 @@
       "answer"
     ],
     "additionalProperties": true
+  },
+  "base_check_ran v1": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "commit": {
+        "type": "string"
+      },
+      "command": {
+        "type": "string"
+      },
+      "passed": {
+        "type": "boolean"
+      },
+      "exit_code": {
+        "type": "integer"
+      },
+      "output": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "repo",
+      "commit",
+      "command",
+      "passed"
+    ],
+    "additionalProperties": true
   }
 }

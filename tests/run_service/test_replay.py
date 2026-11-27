@@ -29,6 +29,7 @@ from temporalio.activity import _Definition
 from temporalio.client import WorkflowHistory
 from temporalio.worker import Replayer, Worker
 
+from meta_harness.run_service.base_checks import FailedBaseCheck
 from meta_harness.run_service.budget_activities import BudgetHold, GoalBudget
 from meta_harness.run_service.prompt_activities import RunPromptRecord
 from meta_harness.run_service.shared import (
@@ -170,6 +171,18 @@ SCENARIOS = {
         "run_changes_nothing": True,
         "verdicts": [{"verdict": "clean", "summary": "app.py already has the fix.", "findings": []}],
         "goal_id": "g-1",
+    },
+    # After the base-checks patch: the run is told a check that fails on the base, the checks with no result
+    # run beside it, and the review reads what they found.
+    "patched-base-checks": {
+        "verdicts": [CLEAN],
+        "goal_id": "g-1",
+        "auto_merge": True,
+        "base_missing": True,
+        "base_checks": [
+            FailedBaseCheck("uv run ruff check .", "E501 line too long"),
+            FailedBaseCheck("uv run pytest -q", "found later"),
+        ],
     },
     # After the merge-base-health patch: the merge waits while the base's own checks run, then merges.
     "patched-merge-base-health": {

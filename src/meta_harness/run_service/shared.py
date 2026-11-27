@@ -403,6 +403,8 @@ class LoopPromptRequest:
     passed_checks: list[str] = field(default_factory=list)
     # The pull request under review, whose description the review prompt shows as it stands on the code host.
     pr_url: str = ""
+    # A review: the repo's standing checks that fail on the base branch too (run_service/base_checks.py).
+    base_failing: list[str] = field(default_factory=list)
 
 
 @dataclass

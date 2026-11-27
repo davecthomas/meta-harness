@@ -649,6 +649,18 @@ async def branch_head(repo: str, branch: str) -> str:
     return str(commit.get("sha", ""))
 
 
+async def base_head(repo: str) -> str:
+    """The newest commit of the repo's default branch: the base a task's run starts from."""
+    if is_local(repo):
+        return await _run("git", "-C", repo, "rev-parse", "HEAD")
+    return await branch_head(repo, "HEAD")
+
+
+async def checkout(git_dir: Path, workspace: Path, commit: str) -> None:
+    """Puts the clone's work tree at that commit, on no branch."""
+    await _git(git_dir, workspace, "checkout", "--quiet", "--detach", commit)
+
+
 async def pull_request(repo: str, number: int) -> dict:
     """The pull request as the code host returns it: its state, whether it merged, and its head and base."""
     return await _github(repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/pulls/{number}") or {}

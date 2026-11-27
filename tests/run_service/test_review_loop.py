@@ -15,6 +15,7 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+from meta_harness.run_service.base_checks import BaseChecksRequest, BaseChecksResult, FailedBaseCheck
 from meta_harness.run_service.shared import (
     BaseHealth,
     BaseHealthRequest,
@@ -115,6 +116,12 @@ class Script:
     # head), with "same" third when the pull request's own diff did not change. None left: current.
     bases: list = field(default_factory=list)
     bases_asked: list[BaseRequest] = field(default_factory=list)
+    # The repo's standing checks that fail on the base (one whose output is "found later" is known only once
+    # the base's checks have run), and whether any had no result when the task started.
+    base_checks: list[FailedBaseCheck] = field(default_factory=list)
+    base_missing: bool = False
+    base_asked_about: list[BaseChecksRequest] = field(default_factory=list)
+    base_ran: list[BaseChecksRequest] = field(default_factory=list)
 
     runs: list[HarnessRequest] = field(default_factory=list)
     prompts: list[LoopPromptRequest] = field(default_factory=list)
@@ -283,7 +290,23 @@ class Script:
             state, head, *same = answer if isinstance(answer, tuple) else (answer, request.head_sha)
             return MergeResult(state=state, head_sha=head, detail="x", same_diff=bool(same))
 
+        @activity.defn(name="known_base_checks")
+        async def known_base_checks(request: BaseChecksRequest) -> BaseChecksResult:
+            self.base_asked_about.append(request)
+            return BaseChecksResult(
+                commit="b0",
+                failing=[c for c in self.base_checks if c.output != "found later"],
+                missing=self.base_missing,
+            )
+
+        @activity.defn(name="run_base_checks")
+        async def run_base_checks(request: BaseChecksRequest) -> BaseChecksResult:
+            self.base_ran.append(request)
+            return BaseChecksResult(commit=request.commit, failing=list(self.base_checks))
+
         return [
+            known_base_checks,
+            run_base_checks,
             bring_base,
             goal_auto_merge,
             merge_pr,

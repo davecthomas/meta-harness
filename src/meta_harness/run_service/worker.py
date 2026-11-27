@@ -46,6 +46,7 @@ from meta_harness.run_service.activities import (
 )
 from meta_harness.run_service.acting_interceptor import ActingInterceptor
 from meta_harness.run_service.base_activities import bring_base
+from meta_harness.run_service.base_checks import known_base_checks, run_base_checks
 from meta_harness.run_service.budget_activities import budget_hold, goal_budget
 from meta_harness.run_service.prompt_activities import record_prompt
 from meta_harness.run_service.resume_activities import resume_state
@@ -144,6 +145,8 @@ async def main() -> None:
             budget_hold,
             base_health,
             bring_base,
+            known_base_checks,
+            run_base_checks,
             post_comment,
             resume_state,
             close_for_restart,

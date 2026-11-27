@@ -346,6 +346,27 @@ async def ensure(
     return sandbox
 
 
+async def run_in(run_id: str, command: str, seconds: float) -> tuple[int, str]:
+    """Runs one shell command in the run's sandbox, at /workspace, as the harness's own bash tool would: the
+    same user, environment and network. Returns its exit code and its output, standard error with it. One
+    that outlasts `seconds` is stopped and counts as failed (124), saying so."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "docker", "exec", "--workdir", "/workspace", container_name(run_id), "bash", "-c", command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )  # fmt: skip
+    except FileNotFoundError as err:
+        raise SandboxError("the docker command is not installed") from err
+    try:
+        out, _ = await asyncio.wait_for(process.communicate(), timeout=seconds)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        return 124, f"the check did not end within {int(seconds)} seconds, so it was stopped"
+    return process.returncode or 0, out.decode(errors="replace")
+
+
 async def destroy(run_id: str, ref: str) -> bool:
     """Saves the harness server's log to runs/<ref>/, removes the container, and removes its network.
 
