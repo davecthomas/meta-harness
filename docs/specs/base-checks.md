@@ -25,8 +25,7 @@ nothing fixed it (`docs/technical-design.md`, Friction rules, "A check that fail
     button, "Fix it", that starts the fix task.
   - Standard: Muxxy starts the fix task. Its pull request waits for the operator to merge, as every task's does.
   - Assertive: Muxxy starts the fix task and merges its pull request once its checks and review pass.
-- **Work goes on meanwhile.** Tasks start on a failing base, told what fails. The fix task runs first among the
-  goal's waiting tasks.
+- **Work goes on meanwhile.** Tasks start on a failing base, told what fails.
 
 ## Decisions
 
@@ -41,6 +40,8 @@ nothing fixed it (`docs/technical-design.md`, Friction rules, "A check that fail
 - **Where the result lives.** A table in the run service's database, keyed by repo, base commit and check
   command, holding whether it passed, its exit code and the last 2,000 characters of its output. Each run of a
   base check is a `base_check_ran` event.
+- **Where the fix task lives.** In Muxxy, as an issue of the goal with the goal's label. A goal whose only
+  tracker is its own code host or Jira gets it there.
 - **Spend.** The base checks call no model. The fix task counts toward its goal's budget as any task does.
 - **A check that cannot run.** A base check that outlasts its limit (20 minutes, `MH_BASE_CHECK_SECONDS`) counts
   as failing and says so. A base that cannot be asked about holds no task.

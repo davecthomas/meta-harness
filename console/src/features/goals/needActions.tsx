@@ -102,7 +102,7 @@ export function HeldIssueAction({ goalId, issueRef, label, fallback, onDone }: {
 // What resolves a need: the page's own button for it. Every need has one.
 export type NeedAction =
   | "approve_plan" | "accept_fix" | "merge" | "review" | "open_task" | "raise_budget" | "open_issue" | "fix_setting"
-  | "settle_review" | "retry" | "split_or_run" | "fix_plan";
+  | "settle_review" | "retry" | "split_or_run" | "fix_plan" | "fix_base";
 // changes: for accept_fix, what the planner's fix changes in the plan, a line each.
 // changes: a fix's changes as a count for each kind. fixes: why the fix was drafted, each gap with what settles it.
 export type Need = { what: string; ref: string; action?: NeedAction | ""; task_id?: string; pr_url?: string; changes?: string[]; fixes?: { gap: string; change: string }[] };
@@ -194,6 +194,21 @@ export function NeedButton({ need, planning, goalId, label, onDone, away = false
     }
     case "raise_budget":
       return <Button size="xs" variant="default" onClick={send(OPEN_SETTINGS)}>Raise the budget</Button>;
+    // A base branch that fails its checks: one press starts the task that fixes it.
+    case "fix_base":
+      return (
+        <Button
+          size="xs"
+          color="teal"
+          leftSection={<IconCheck size={14} />}
+          onClick={async () => {
+            await api.fixBase(goalId);
+            onDone();
+          }}
+        >
+          Fix it
+        </Button>
+      );
     // A service's setting that fell back to its default: the logs name it, the value and how to fix it.
     case "fix_setting":
       return <Button size="xs" variant="default" component={Link} to="/admin/logs">Open the logs</Button>;

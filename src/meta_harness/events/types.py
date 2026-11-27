@@ -628,6 +628,21 @@ REGISTRY: list[EventType] = [
             ["ref", "parent", "from_ref", "goal_id", "action"],
         ),
     ),
+    # The planner started the one task that fixes a repo's failing base branch (planner/base_fix.py). ref is
+    # the task's issue. The actor is the operator who pressed Fix it, or the planner for a goal that does not ask.
+    EventType(
+        "base_fix_started",
+        1,
+        _object(
+            {
+                "goal_id": {"type": "string"},
+                "repo": {"type": "string"},
+                "commit": {"type": "string"},
+                "ref": {"type": "string"},
+            },
+            ["goal_id", "repo", "ref"],
+        ),
+    ),
     # The issue the planner filed for a merged pull request's follow-up findings (planner/follow_ups.py).
     EventType(
         "follow_ups_filed",

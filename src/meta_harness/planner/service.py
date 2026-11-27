@@ -65,6 +65,7 @@ from meta_harness.planner import (
     acts_as_api,
     activity,
     auto_split,
+    base_fix,
     follow_ups,
     budget_api,
     github_api,
@@ -339,6 +340,13 @@ def create_app(
                 result.follow_ups = await follow_ups.file(goal, tracker, events, result.errors)
             except Exception as err:  # noqa: BLE001 - logged; the next sweep looks again
                 log.error("goal %s: its follow-ups could not be filed: %s: %s", goal["id"], type(err).__name__, err)
+            # A base branch one of the goal's tasks found failing gets its one fix task, or is asked about.
+            try:
+                await base_fix.look(goal, tracker, events, result.errors)
+            except Exception as err:  # noqa: BLE001 - logged; the next sweep looks again
+                log.error(
+                    "goal %s: its failing base could not be looked at: %s: %s", goal["id"], type(err).__name__, err
+                )
             # An issue the sweep held for its size is split by the planner itself, within its tries; the next
             # sweep takes the parts in.
             try:
@@ -1892,6 +1900,7 @@ def create_app(
 
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again, sizer=size)
     budget_api.register(app, operator, load, change_with, events, tasks)
+    base_fix.register(app, operator, load, tracker, events)
     github_api.register(app, operator, events, github_transport)
     reach.register(app, operator, github_transport)
     acts_as_api.register(app, operator, load, events, github_transport)
