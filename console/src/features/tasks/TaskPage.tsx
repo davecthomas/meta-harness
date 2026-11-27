@@ -284,7 +284,27 @@ export function TaskPage() {
         description={
           <Stack gap={6}>
             {task.name && <Text size="sm">{task.title}</Text>}
-            <Group gap={6}><StatusBadge status={shown} /><CopyId id={task.id} /></Group>
+            <Group gap={6}>
+              <StatusBadge status={shown} />
+              {/* A blocked task says why beside its badge: the issues it waits for. */}
+              {shown === "blocked" && (
+                <Group gap={4} data-testid="blocked-why">
+                  <Text size="sm" c="dimmed">until</Text>
+                  {(task.depends_on ?? []).length ? (
+                    (task.depends_on ?? []).map((ref, n, all) => (
+                      <Group key={ref} gap={4}>
+                        {n > 0 && <Text size="sm" c="dimmed">{n === all.length - 1 ? "and" : ","}</Text>}
+                        <IssueLink issueRef={ref} />
+                      </Group>
+                    ))
+                  ) : (
+                    <Text size="sm" c="dimmed">the issues it depends on</Text>
+                  )}
+                  <Text size="sm" c="dimmed">{(task.depends_on ?? []).length > 1 ? "are closed" : "is closed"}</Text>
+                </Group>
+              )}
+              <CopyId id={task.id} />
+            </Group>
           </Stack>
         }
         actions={
