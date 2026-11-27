@@ -9,6 +9,8 @@
 export const INK_SECONDS = 18;
 // How long the octopus goes on letting ink out.
 export const EMIT_SECONDS = 3.2;
+// How long a cleared cloud takes to fade.
+export const CLEAR_SECONDS = 0.4;
 export const PUFFS = 320;
 // The ink's colors. Each billow is one of them, so the cloud is made of sub-clouds of different inks that
 // overlap and mix where they meet, as ink in water does. All black, it read as a shadow, not as ink.
@@ -150,7 +152,19 @@ export function ink(x: number, y: number, into: HTMLElement = document.body): bo
   const done = () => {
     canvas.remove();
     into.classList.remove("splash-inking");
+    window.removeEventListener("pointerdown", clear, true);
   };
+  // A click anywhere while the cloud is out clears it, quickly; the click still does what it does.
+  const clear = () => {
+    window.removeEventListener("pointerdown", clear, true);
+    canvas.style.transition = `opacity ${CLEAR_SECONDS}s ease-out`;
+    canvas.style.opacity = "0";
+    window.setTimeout(done, CLEAR_SECONDS * 1000);
+  };
+  // Listening from the next turn on, so the click that let the ink out does not clear it.
+  window.setTimeout(() => {
+    if (canvas.isConnected) window.addEventListener("pointerdown", clear, true);
+  }, 0);
   window.setTimeout(done, INK_SECONDS * 1000);
   const context = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
   if (!context || typeof window.requestAnimationFrame !== "function") return true;
