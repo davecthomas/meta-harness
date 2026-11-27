@@ -1168,3 +1168,11 @@ def test_the_planners_own_runs_share_one_spend_limit_and_an_asked_run_starts_the
     # A goal that has spent its budget starts none either.
     broke = planning_spend.refusal({**goal, "max_usd": "10.00", "spent_usd": "10.00"}, {}, tasks, events)
     assert broke.startswith("the goal has spent its $10.00 budget")
+
+
+def test_the_planner_is_told_a_change_and_its_tests_are_one_task(world):
+    """A plan gave a whole task to a 28-line test of code another task wrote: a run, a review and a merge for it."""
+    client, _, _, tasks = world
+    goal = _feature(client)
+    [task] = [t for t in tasks.tasks.values() if t.get("goal_id") == goal["id"]]
+    assert "A change and the tests that prove it are one task" in task["description"]

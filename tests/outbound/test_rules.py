@@ -15,7 +15,7 @@ from meta_harness.run_service.shared import LoopPromptRequest
 SRC = Path(__file__).resolve().parents[2] / "src" / "meta_harness"
 SHIPPED = (skills.skills_dir() / "no-ai-slop2" / "WRITING-RULES.md").read_text(encoding="utf-8").strip()
 # The run prompts that end in text for people: a pull request's summary, a review, a plan's issues.
-RUN_PROMPTS = ("repo-task-v1", "fix-v1", "review-v5", "plan-v1", "plan-review-v1")
+RUN_PROMPTS = ("repo-task-v1", "fix-v1", "review-v6", "plan-v1", "plan-review-v1")
 
 
 def _skills(monkeypatch, files: dict[str, str] | Exception) -> None:

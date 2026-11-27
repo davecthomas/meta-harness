@@ -65,7 +65,7 @@ def test_a_review_and_a_fix_run_close_with_the_charter_then_the_writing_rules(ki
 
 
 def test_the_review_prompt_sorts_findings_into_blocking_and_follow_up():
-    template = (activities.PROMPTS_DIR / "review-v5.txt").read_text(encoding="utf-8")
+    template = (activities.PROMPTS_DIR / "review-v6.txt").read_text(encoding="utf-8")
 
     assert "is the main branch better with it merged as it is than without it" in template
     assert "set blocking to false" in template

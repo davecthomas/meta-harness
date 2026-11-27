@@ -4,8 +4,10 @@ import asyncio
 from decimal import Decimal
 
 import pytest
+from psycopg.types.json import Jsonb
 
-from meta_harness.planner import actions, plan_review, planning, planning_spend
+from meta_harness import db
+from meta_harness.planner import actions, plan_review, planning, planning_spend, plans
 
 from .test_planner import OPERATOR, migrated, registry  # noqa: F401
 from .test_planning import _feature, _planned, draft
@@ -423,3 +425,28 @@ def test_planning_again_while_a_review_runs_leaves_it_running(world):  # noqa: F
     assert tasks.tasks[task["id"]]["status"] == before != "canceled"
     assert plan_review.rows(goal["id"])[-1]["state"] == "running"
     assert replanned.json()["review"]["state"] == "running"
+
+
+def test_an_approval_refused_leaves_the_running_review_alone(world):  # noqa: F811
+    """A second press while an approval runs, and a plan that cannot be approved, used to end the review."""
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    _planned(client, events, tasks, goal, [draft("store")])
+    task = _review(client, tasks, events, goal)
+
+    with db.connect(autocommit=True) as conn:
+        assert plans.claim_approval(conn, goal["id"]), "another approval holds the plan"
+    second = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+    assert second.status_code == 409 and "being approved already" in second.json()["detail"]
+    assert tasks.tasks[task["id"]]["status"] != "canceled"
+    assert plan_review.rows(goal["id"])[-1]["state"] == "running"
+
+    with db.connect(autocommit=True) as conn:
+        plans.end_approval(conn, goal["id"], None)
+        conn.execute(
+            "UPDATE planner.plan SET invalid = %s WHERE goal_id = %s", (Jsonb(["store names no repo"]), goal["id"])
+        )
+    invalid = client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR)
+    assert invalid.status_code == 409, invalid.text
+    assert tasks.tasks[task["id"]]["status"] != "canceled"
+    assert plan_review.rows(goal["id"])[-1]["state"] == "running"
