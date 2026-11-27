@@ -28,7 +28,7 @@ EXISTING_REF = re.compile(r"^(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 CHECKS_HEADING = re.compile(r"^##\s+acceptance checks\s*$", re.IGNORECASE | re.MULTILINE)
 PLAN_COLUMNS = (
     "goal_id, version, drafts, invalid, source, task_id, note, created, created_by, created_at, items, summary, "
-    "gaps, issues, tracked, stopped_at"
+    "gaps, issues, tracked, stopped_at, dismissed_gaps"
 )
 # What a plan decides for an issue the goal already had.
 KEEP, SPLIT, LEAVE_OUT = "keep", "split", "leave_out"
@@ -427,6 +427,24 @@ def latest(conn: psycopg.Connection, goal_id: str) -> dict | None:
         )
         row = cur.fetchone()
     return _plan(row) if row else None
+
+
+def dismiss_gap(conn: psycopg.Connection, goal_id: str, version: int, gap: str, who: str) -> bool:
+    """Takes one gap out of that plan version's gaps and records who dismissed it, and when, in its
+    dismissed_gaps. The version is changed in place. False when that version has no such gap."""
+    with conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT gaps FROM planner.plan WHERE goal_id = %s AND version = %s FOR UPDATE", (goal_id, version))
+        row = cur.fetchone()
+        gaps = list((row or {}).get("gaps") or [])
+        if gap not in gaps:
+            return False
+        cur.execute(
+            "UPDATE planner.plan SET gaps = %s, dismissed_gaps = dismissed_gaps || "
+            "jsonb_build_array(jsonb_build_object('gap', %s::text, 'by', %s::text, 'at', now())) "
+            "WHERE goal_id = %s AND version = %s",
+            (Jsonb([g for g in gaps if g != gap]), gap, who, goal_id, version),
+        )
+        return True
 
 
 def from_task(conn: psycopg.Connection, goal_id: str, task_id: str) -> dict | None:

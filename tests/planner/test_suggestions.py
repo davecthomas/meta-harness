@@ -9,6 +9,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+from meta_harness import db
 from meta_harness.planner import plans, planning, suggestions, updates
 from meta_harness.planner.service import create_app
 
@@ -253,3 +254,58 @@ def test_a_fix_to_a_plan_the_operator_edited_is_left_behind(world):
     assert collected["status"] == "open", "it is kept as drafted, and does not replace what the operator made"
     shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
     assert shown["plan"]["version"] == 2 and shown["plan"]["source"] == "edited" and shown["applied_fix"] is None
+
+
+def _status(goal_id: str, version: int) -> str:
+    with db.connect(autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT status FROM planner.plan_suggestion WHERE goal_id = %s AND for_version = %s", (goal_id, version)
+        ).fetchone()
+    return row[0]
+
+
+def _dismiss_gap(client, goal_id: str, version: int, gap: str):
+    return client.post(
+        f"/v1/goals/{goal_id}/plan/gaps/dismiss", headers=OPERATOR, json={"version": version, "gap": gap}
+    )
+
+
+def test_dismissing_a_gap_leaves_an_open_fix_for_that_version_behind(world, waiting):
+    """The fix was drafted from the version's gaps before the dismissal: accepting it would bring the gap back."""
+    client, events, tasks = world
+    goal, plan = _planned(client, events, tasks)
+    task = _start(goal, plan, tasks, events, Assessor())
+    _end(events, tasks, task, [draft("api", ("store",))], [OPEN])
+    asyncio.run(suggestions.collect(goal, tasks, events))
+    assert _status(goal["id"], 1) == "open"
+
+    dismissed = _dismiss_gap(client, goal["id"], 1, OPEN)
+
+    assert dismissed.status_code == 200, dismissed.text
+    assert dismissed.json()["suggestion"] is None and _status(goal["id"], 1) == "dismissed"
+    assert dismissed.json()["plan"]["gaps"] == [CLASH]
+    refused = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
+    assert refused.status_code == 409
+    assert "plan_fix_accepted" not in events.types()
+
+
+def test_a_fix_drafted_before_a_dismissal_neither_applies_itself_nor_is_accepted(world):
+    """A fix still drafting when the gap was dismissed becomes open later, with the old gaps."""
+    client, events, tasks = world
+    goal, plan = _planned(client, events, tasks)
+    task = _start(goal, plan, tasks, events, Assessor())
+    dismissed = _dismiss_gap(client, goal["id"], 1, OPEN)
+    assert dismissed.status_code == 200 and _status(goal["id"], 1) == "drafting"
+    _end(events, tasks, task, [draft("api", ("store",))], [OPEN])
+    goal = client.get(f"/v1/goals/{goal['id']}", headers=OPERATOR).json()
+
+    collected = asyncio.run(suggestions.collect(goal, tasks, events))
+
+    assert collected["status"] == "open", "a version with a dismissed gap is no longer the planner's own"
+    refused = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
+    assert refused.status_code == 409 and "before one of the plan's open questions" in refused.json()["detail"]
+    with pytest.raises(suggestions.SuggestionError):
+        suggestions.accept(goal, "dave", events)
+    shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert (shown["plan"]["version"], shown["plan"]["gaps"]) == (1, [CLASH])
+    assert "plan_fix_accepted" not in events.types()
