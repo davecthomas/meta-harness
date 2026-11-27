@@ -22,6 +22,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -282,13 +283,35 @@ async def collect(goal: dict, tasks: Any, events: Any) -> dict | None:
 
 
 def _untouched(goal: dict, version: int) -> bool:
-    """Whether the plan is still the one the planner wrote at that version: no operator has edited it, and no
-    planning task is writing another."""
+    """Whether the plan is still the one the planner wrote at that version: no operator has edited it or
+    dismissed one of its gaps, and no planning task is writing another."""
     if goal.get("plan_task_id") or goal["status"] != "planning":
         return False
     with db.connect(autocommit=True) as conn:
         latest = plans.latest(conn, goal["id"])
-    return bool(latest and latest["version"] == version and latest["source"] == "planned")
+    return bool(
+        latest and latest["version"] == version and latest["source"] == "planned" and not latest["dismissed_gaps"]
+    )
+
+
+def dismiss_gap(goal_id: str, version: int, gap: str, who: str) -> bool:
+    """Takes a gap out of that plan version (plans.dismiss_gap), and leaves behind any open fix for it in the
+    same transaction: the fix was drafted from the version's old gaps, and accepting it would bring the gap
+    back. False when the version has no such gap; nothing is changed then."""
+    with db.connect(autocommit=True) as conn, conn.transaction():
+        if not plans.dismiss_gap(conn, goal_id, version, gap, who):
+            return False
+        conn.execute(
+            "UPDATE planner.plan_suggestion SET status = 'dismissed', updated_at = now() "
+            "WHERE goal_id = %s AND for_version = %s AND status = 'open'",
+            (goal_id, version),
+        )
+    return True
+
+
+def _after_dismissal(plan: dict, created_at: datetime) -> bool:
+    """Whether a gap of the plan version was dismissed after a suggestion made at created_at."""
+    return any(datetime.fromisoformat(str(d["at"])) > created_at for d in plan.get("dismissed_gaps") or [])
 
 
 def applied(goal_id: str) -> dict | None:
@@ -378,7 +401,8 @@ def accept(goal: dict, who: str, events: Any) -> dict:
     """Makes the open suggestion the goal's next plan version. Returns that plan.
 
     Raises:
-        SuggestionError: The goal has no open suggestion for its latest plan.
+        SuggestionError: The goal has no open suggestion for its latest plan, or one of that plan's gaps was
+            dismissed after the suggestion was made: it still holds the gap.
     """
     with db.connect(autocommit=True) as conn, conn.cursor(row_factory=dict_row) as cur:
         latest = plans.latest(conn, goal["id"])
@@ -391,6 +415,11 @@ def accept(goal: dict, who: str, events: Any) -> dict:
             raise SuggestionError(
                 "this goal has no fix waiting for its current plan: the plan changed since it was suggested. "
                 "Ask for an update to see where the plan stands"
+            )
+        if _after_dismissal(latest, row["created_at"]):
+            raise SuggestionError(
+                "this fix was drafted before one of the plan's open questions was dismissed, and would bring it "
+                "back. Dismiss the fix, or plan again"
             )
         invalid = plans.validate(row["drafts"], goal["repos"], row["items"], row["issues"])
         note = "The planner's suggested fix: " + "; ".join(f["change"] for f in row["fixes"])

@@ -814,6 +814,16 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("plan_fix_dismissed", 1, _object({"goal_id": {"type": "string"}}, ["goal_id"])),
+    # An operator said one of a plan version's open questions (gaps) is not a problem (planner/plan_api.py).
+    # The gap leaves that version's gaps. The actor is the operator.
+    EventType(
+        "plan_gap_dismissed",
+        1,
+        _object(
+            {"goal_id": {"type": "string"}, "version": {"type": "integer"}, "gap": {"type": "string"}},
+            ["goal_id", "version", "gap"],
+        ),
+    ),
     # An operator connected their own GitHub account to the console, or disconnected it (planner/github_api.py).
     # The actor is the operator. Never the token.
     EventType(
