@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { EMIT_SECONDS, emit, ink, INK_SECONDS, INKS, LIFE, look, onBox, PUFFS, seeded, siphon, step } from "./ink";
+import { CLEAR_SECONDS, EMIT_SECONDS, emit, ink, INK_SECONDS, INKS, LIFE, look, onBox, PUFFS, seeded, siphon, step } from "./ink";
 
 // The test page has no canvas to draw on: the cloud still comes and goes, undrawn.
 beforeEach(() => {
@@ -99,4 +99,20 @@ test("the cloud mixes three inks, each billow one of them, so it reads as ink in
   const [purple, brown] = INKS;
   expect(purple[2] > purple[1] && purple[0] > purple[1]).toBe(true);
   expect(brown[0] > brown[1] && brown[1] > brown[2]).toBe(true);
+});
+
+test("a click anywhere while the cloud is out clears it, but the click that let it out does not", () => {
+  vi.useFakeTimers();
+  expect(ink(120, 340)).toBe(true);
+  window.dispatchEvent(new Event("pointerdown"));
+  expect(document.querySelector(".splash-ink")).not.toBeNull();
+
+  vi.advanceTimersByTime(0);
+  expect(document.querySelector(".splash-ink")).not.toBeNull();
+  document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  expect((document.querySelector(".splash-ink") as HTMLElement).style.opacity).toBe("0");
+  vi.advanceTimersByTime(CLEAR_SECONDS * 1000);
+  expect(document.querySelector(".splash-ink")).toBeNull();
+  expect(document.body.classList.contains("splash-inking")).toBe(false);
+  expect(ink(10, 10)).toBe(true);
 });
