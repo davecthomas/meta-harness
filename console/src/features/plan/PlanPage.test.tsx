@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
@@ -263,4 +263,81 @@ test("what the decision holds besides its sentence shows over the buttons even w
   const bar = screen.getByTestId("plan-decision");
   const held = within(bar).getByTestId("held");
   expect(held.compareDocumentPosition(within(bar).getAllByRole("button")[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+// The plan page with a fake service: the plan, the needs list, and every call it is sent.
+const QUESTIONS = ["No task covers the export.", "The login flow is unclear."];
+function serve(initialGaps: string[]) {
+  let gaps = initialGaps;
+  let need = "accept_fix";
+  const posts: { url: string; body: unknown }[] = [];
+  const plan = () => ({
+    goal_id: "g-1", status: "planning", planning_task_id: null, approved_at: null, label: "x", planning_usd: "4.00",
+    decision: READY, glance: null,
+    plan: { version: 3, drafts: [], gaps, invalid: [], source: "planned", task_id: null, note: null, created: {}, created_by: "x", created_at: "2025-01-01T00:00:00Z" },
+  });
+  const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    const path = String(url).split("?")[0];
+    if (init?.method === "POST") {
+      const body = JSON.parse(String(init.body ?? "{}"));
+      posts.push({ url: path, body });
+      if (path.endsWith("/plan/gaps/dismiss")) {
+        gaps = gaps.filter((g) => g !== body.gap);
+        need = "approve_plan";
+      } else if (path.endsWith("/replan")) need = "approve_plan";
+      return json(plan());
+    }
+    if (path.endsWith("/v1/needs")) return json({ needs: [{ key: "n1", action: need, asks: need, title: "G", since: "", goal_id: "g-1", goal: "G", label: "", what: "", task_id: null }] });
+    if (path.endsWith("/v1/goals/g-1/plan")) return json(plan());
+    if (/\/v1\/(tasks|goals)\b/.test(path)) return json({ items: [], total: 0 });
+    return json({});
+  });
+  return posts;
+}
+
+async function openPlan(gaps: string[]) {
+  const posts = serve(gaps);
+  const { forgetNeeds, useGoalNeeds } = await import("../overview/needsYou");
+  const { PlanBody } = await import("./PlanPage");
+  forgetNeeds();
+  const Needs = () => {
+    const needs = useGoalNeeds();
+    return <div data-testid="needs">{needs("g-1").map((n) => n.action).join(",")}</div>;
+  };
+  const goal = { id: "g-1", status: "planning", tracker: "none" } as unknown as Goal;
+  shown(<><PlanBody goal={goal} onApproved={() => undefined} onChanged={() => undefined} /><Needs /></>);
+  await screen.findByTestId("plan-questions");
+  return posts;
+}
+
+test("each open question has both buttons, and the dismissed one is gone with the others kept", async () => {
+  const posts = await openPlan(QUESTIONS);
+  await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("accept_fix"));
+  expect(screen.getAllByRole("button", { name: "Send to the planner (up to $4)" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(2);
+  fireEvent.click(screen.getAllByRole("button", { name: "Not a problem" })[0]);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(1));
+  expect(posts[0]).toEqual({ url: "/v1/goals/g-1/plan/gaps/dismiss", body: { version: 3, gap: QUESTIONS[0] } });
+  expect(screen.getByTestId("plan-questions").textContent).not.toContain(QUESTIONS[0]);
+  await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("approve_plan"));
+});
+
+test("the list goes once the last question is dismissed", async () => {
+  await openPlan([QUESTIONS[0]]);
+  fireEvent.click(screen.getByRole("button", { name: "Not a problem" }));
+  await waitFor(() => expect(screen.queryByTestId("plan-questions")).toBeNull());
+});
+
+test("Send needs an answer, posts the note for the planner, and reads the needs again", async () => {
+  const posts = await openPlan([QUESTIONS[0]]);
+  await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("accept_fix"));
+  const send = screen.getByRole("button", { name: "Send to the planner (up to $4)" });
+  expect((send as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByRole("textbox", { name: "Answer: " + QUESTIONS[0] }), { target: { value: "Yes, add it." } });
+  expect((send as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(send);
+  await waitFor(() => expect(posts.map((p) => p.url)).toEqual(["/v1/goals/g-1/replan"]));
+  expect(posts[0].body).toEqual({ note: "About " + QUESTIONS[0] + ": Yes, add it." });
+  await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("approve_plan"));
 });

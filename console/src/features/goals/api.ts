@@ -122,6 +122,8 @@ export interface GoalPlan {
   planning_asked_at?: string | null;
   // What a plan review may cost, as the planner words it, such as "4.00"; absent from a planner older than this field.
   review_usd?: string | null;
+  // One planning run's limit, such as "4.00"; null when none is set.
+  planning_usd?: string | null;
   approved_at: string | null;
   // An approval is creating the plan's tasks now (plan.created grows as each exists), and why the last one
   // stopped when it did not finish.
@@ -374,6 +376,9 @@ export const goalsApi = {
   // turn the goal's reviews on or off.
   reviewPlan: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan/review`, { method: "POST" }),
   fixFindings: (id: string) => call<GoalPlan>(`/v1/goals/${id}/plan/review/fix`, { method: "POST" }),
+  // Say one of the newest version's open questions is not a problem; the answer is the plan as it now is.
+  dismissPlanGap: (id: string, version: number, gap: string) =>
+    call<GoalPlan>(`/v1/goals/${id}/plan/gaps/dismiss`, { method: "POST", body: JSON.stringify({ version, gap }) }),
   dismissPlanFinding: (id: string, finding: string) => call<GoalPlan>(`/v1/goals/${id}/plan/review/findings/${encodeURIComponent(finding)}/dismiss`, { method: "POST" }),
   setPlanReview: (id: string, on: boolean) => call<Goal>(`/v1/goals/${id}/plan/review-setting`, { method: "PUT", body: JSON.stringify({ on }) }),
   planVersions: (id: string) => call<{ versions: PlanVersion[] }>(`/v1/goals/${id}/plan/versions`),

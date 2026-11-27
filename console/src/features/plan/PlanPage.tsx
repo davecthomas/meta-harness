@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Alert, Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, Stack, Switch, Text, Timeline, UnstyledButton } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Collapse, Group, List, Loader, Paper, Stack, Switch, Text, TextInput, Timeline, UnstyledButton } from "@mantine/core";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type Goal, type GoalPlan as Plan, type PlanAsk, type PlanFinding, type PlanGlance, type PlanVersion } from "../../api";
 import { ErrorAlert, PageHeader, SectionTitle, when } from "../../components/ui";
@@ -48,7 +48,7 @@ const dollars = (amount: string | null | undefined): string => {
 // The one thing the plan asks now, in a sentence or two, beside the buttons that answer it: the first is the
 // recommended one. The service decides what it says and offers; this draws it. It stays in view as the page
 // scrolls, so the decision is never more than a glance away.
-export function DecisionBar({ decision, onAct, busy, gaps = [], extra }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[]; extra?: ReactNode }) {
+export function DecisionBar({ decision, onAct, busy, gaps = [], extra, onSend, onDismissGap, planningUsd }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[]; extra?: ReactNode; onSend?: (gap: string, answer: string) => void; onDismissGap?: (gap: string) => void; planningUsd?: string | null }) {
   const working = decision.state === "drafting" || decision.state === "improving";
   const weigh = decision.buttons.length > 0 ? gaps : [];
   const weighFirst = weigh.length > 0 || !!extra;
@@ -84,7 +84,7 @@ export function DecisionBar({ decision, onAct, busy, gaps = [], extra }: { decis
       ) : (
         <Stack gap="sm">
           {says}
-          {weigh.length > 0 && <OpenQuestions gaps={weigh} />}
+          {weigh.length > 0 && <OpenQuestions gaps={weigh} busy={busy} onSend={onSend} onDismiss={onDismissGap} planningUsd={planningUsd} />}
           {extra}
           <Group justify="flex-end">{buttons}</Group>
         </Stack>
@@ -333,7 +333,8 @@ export function ReviewPart({ plan, goal, onChanged, openInDecision = false }: { 
 }
 
 // What only the operator can settle, a few at most in view.
-export function OpenQuestions({ gaps }: { gaps: string[] }) {
+// With onSend and onDismiss, each item has an answer field, "Send to the planner" and "Not a problem".
+export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningUsd }: { gaps: string[]; busy?: boolean; onSend?: (gap: string, answer: string) => void; onDismiss?: (gap: string) => void; planningUsd?: string | null }) {
   const [all, setAll] = useState(false);
   if (!gaps.length) return null;
   const shown = all ? gaps : gaps.slice(0, SHOWN_BEFORE_COUNTING);
@@ -342,10 +343,29 @@ export function OpenQuestions({ gaps }: { gaps: string[] }) {
   return (
     <Alert color="yellow" variant="light" p="sm" title="Weigh this first" data-testid="plan-questions">
       <List size="sm" spacing={4}>
-        {shown.map((gap, i) => <List.Item key={i}>{gap}</List.Item>)}
+        {shown.map((gap, i) => (
+          <List.Item key={`${i}:${gap}`}>
+            {gap}
+            {onSend && onDismiss && <QuestionActions gap={gap} busy={busy} onSend={onSend} onDismiss={onDismiss} planningUsd={planningUsd} />}
+          </List.Item>
+        ))}
       </List>
       {gaps.length > shown.length && <Anchor component="button" size="sm" mt={4} onClick={() => setAll(true)}>Show the other {gaps.length - shown.length}</Anchor>}
     </Alert>
+  );
+}
+
+function QuestionActions({ gap, busy, onSend, onDismiss, planningUsd }: { gap: string; busy: boolean; onSend: (gap: string, answer: string) => void; onDismiss: (gap: string) => void; planningUsd?: string | null }) {
+  const [answer, setAnswer] = useState("");
+  const text = answer.trim();
+  return (
+    <Group gap="xs" mt={4} wrap="wrap" align="flex-end">
+      <TextInput size="xs" style={{ flex: "1 1 220px" }} aria-label={`Answer: ${gap}`} placeholder="Your answer" value={answer} onChange={(event) => setAnswer(event.currentTarget.value)} />
+      <Button size="xs" variant="default" disabled={busy || !text} onClick={() => onSend(gap, text)}>
+        {`Send to the planner${planningUsd ? ` (up to ${dollars(planningUsd)})` : ""}`}
+      </Button>
+      <Button size="xs" variant="default" disabled={busy} onClick={() => onDismiss(gap)}>Not a problem</Button>
+    </Group>
   );
 }
 
@@ -419,6 +439,35 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
     try {
       await api.dismissPlanFinding(goalId, id);
       window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+      void reloadNeeds();
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : String(err)}. Press Not a problem again to retry.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendAnswer = async (gap: string, answer: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.replan(goalId, `About ${gap}: ${answer}`);
+      window.dispatchEvent(new CustomEvent(PLAN_CHANGED));
+      void reloadNeeds();
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : String(err)}. Press Send to the planner again to retry.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismissGap = async (gap: string) => {
+    const version = plan?.plan?.version;
+    if (version === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      shown(await api.dismissPlanGap(goalId, version, gap));
       void reloadNeeds();
     } catch (err) {
       setError(`${err instanceof Error ? err.message : String(err)}. Press Not a problem again to retry.`);
@@ -520,7 +569,7 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
   return (
     <Stack gap="xs" mb="md" data-testid="plan-body">
       <ErrorAlert error={error} />
-      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} extra={inBox} />}
+      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} extra={inBox} onSend={(g, a) => void sendAnswer(g, a)} onDismissGap={(g) => void dismissGap(g)} planningUsd={plan?.planning_usd} />}
       {/* The figures once: not under a decision whose sentence already says what the plan may spend. */}
       {plan?.glance && !(decision && plan.glance.may_spend_usd !== null && decision.says.includes(dollars(plan.glance.may_spend_usd))) && <Glance glance={plan.glance} />}
       {/* A review that still asks something (it is running, or left a problem open) comes before the tasks.
