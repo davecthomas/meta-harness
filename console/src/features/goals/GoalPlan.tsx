@@ -335,6 +335,8 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
   // the page does not wait on the answer: it reads the plan again every two seconds, shows how many tasks
   // exist so far, and ends when the goal has started or the approval says why it stopped.
   const approving = watching || !!shown?.approving;
+  // Closed by the operator: the goal starts the same, and the page shows its tasks as they come.
+  const [progressClosed, setProgressClosed] = useState(false);
   useEffect(() => {
     if (!approving) return;
     const timer = setInterval(() => void load(), APPROVING_MS);
@@ -621,7 +623,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
           </Group>
         </Stack>
       </Modal>
-      <Modal opened={approving && asking !== "replan"} onClose={() => setAsking(null)} withCloseButton={false} closeOnClickOutside={false} title="Starting the goal" size="lg">
+      <Modal opened={approving && asking !== "replan" && !progressClosed} onClose={() => setProgressClosed(true)} title="Starting the goal" size="lg">
         <Stack gap="md" data-testid="approve-progress" role="status">
           <Group gap="sm">
             <Loader size="sm" />
@@ -631,7 +633,7 @@ export function GoalPlan({ goal, onApproved, embedded = false, onShown }: { goal
                 : "Starting its tasks."}
             </Text>
           </Group>
-          <Text size="sm" c="dimmed">Writing and checking each task takes a few minutes. You can leave this page; nothing else needs you.</Text>
+          <Text size="sm" c="dimmed">Writing and checking each task takes a few minutes. You can close this or leave the page; nothing else needs you.</Text>
         </Stack>
       </Modal>
       {/* Only for the main goal page's own Approve, or after a refusal: the decision bar approves at once. */}
