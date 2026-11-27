@@ -57,7 +57,7 @@ function Blocked({ task }: { task: Task }) {
   }
   return (
     <Stack gap={6}>
-      <Text size="sm">It waits on {refs.length === 1 ? "another issue" : "other issues"}, and is queued once {refs.length === 1 ? "it is" : "each is"} closed.</Text>
+      {/* Why it waits is beside its badge; here, where each issue it waits for stands. */}
       {refs.map((ref) => {
         const issue = issues[ref];
         return (
