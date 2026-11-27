@@ -99,6 +99,13 @@ with workflow.unsafe.imports_passed_through():
         wait_merge_checks,
     )
     from meta_harness.run_service.base_activities import bring_base
+    from meta_harness.run_service.base_checks import (
+        BaseChecksRequest,
+        BaseChecksResult,
+        known_base_checks,
+        run_base_checks,
+        said_to_run,
+    )
     from meta_harness.run_service.budget_activities import BudgetHold, budget_hold, goal_budget
     from meta_harness.run_service.prompt_activities import RunPromptRecord, loop_template, record_prompt
     from meta_harness.run_service import run_provenance
@@ -197,6 +204,9 @@ BUDGET_RECHECK = timedelta(minutes=5)
 # The least a run is started with. A run given less ends on its spend limit before it can do anything.
 MIN_RUN_USD = Decimal("0.10")
 CODE_HOST_TIMEOUT = timedelta(minutes=2)
+# The base's checks, in a sandbox of their own: a clone, the sandbox's start, and each check at its own limit.
+BASE_CHECKS_TIMEOUT = timedelta(hours=2)
+BASE_CHECKS_HEARTBEAT = timedelta(minutes=2)
 CODE_HOST_RETRY = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
 
 
@@ -205,6 +215,11 @@ class RunTask:
     def __init__(self) -> None:
         self._current_run_id: str | None = None
         self._task_id = ""
+        # What is known of the repo's standing checks on its base branch, once asked, and the activity still
+        # running the ones with no result (run_service/base_checks.py).
+        self._base_asked = False
+        self._base = BaseChecksResult()
+        self._base_run = None
         # The task's goal, for the publish activity's provenance headers.
         self._goal_id = ""
         self._route_no = 0
@@ -519,6 +534,10 @@ class RunTask:
             pending = list(candidates)
             while pending:
                 candidate = pending.pop(0)
+                if not self._base_asked and prepared.repo and request.task_type not in ("plan", "smoke"):
+                    self._base_asked = True
+                    if workflow.patched("base-checks"):
+                        await self._ask_base(request, prepared, candidate)
                 left, limit = await self._grant(
                     request.goal_id, limit, spent, _need(attempts, "task"), f"run {len(attempts) + 1}"
                 )
@@ -528,7 +547,7 @@ class RunTask:
                 run_id = run_id_for(info.workflow_id, attempt)
                 self._current_run_id = run_id
                 harness, decision, detail, run_spent = await self._try(
-                    prepared.prompt,
+                    prepared.prompt + said_to_run(self._base.failing),
                     run_id,
                     candidate,
                     left,
@@ -590,6 +609,46 @@ class RunTask:
                 "%s: tier %s has no candidates left, so the task escalates to %s", info.workflow_id, tier, next_tier
             )
             floor = next_tier
+
+    async def _ask_base(self, request: RunTaskInput, prepared: PreparedRun, candidate: Candidate) -> None:
+        """Reads what is kept of the repo's standing checks on its base, so the task's runs are told what
+        already fails there, and starts the checks with no result beside the first run: the task waits on
+        none of them, and its reviews read how they ended. A base that cannot be asked about is no reason to
+        hold the task: it runs untold."""
+        asked = BaseChecksRequest(
+            repo=prepared.repo,
+            task_id=self._task_id,
+            goal_id=request.goal_id,
+            image=str(candidate.profile.get("image") or ""),
+            profile=dict(candidate.profile),
+        )
+        try:
+            self._base = await workflow.execute_activity(
+                known_base_checks, asked, start_to_close_timeout=CODE_HOST_TIMEOUT, retry_policy=PREPARE_RETRY
+            )
+        except ActivityError as err:
+            workflow.logger.warning("%s: the base's checks could not be read: %s", self._where(), err.cause or err)
+            return
+        if self._base.missing and asked.image:
+            asked.commit = self._base.commit
+            self._base_run = workflow.start_activity(
+                run_base_checks,
+                asked,
+                start_to_close_timeout=BASE_CHECKS_TIMEOUT,
+                heartbeat_timeout=BASE_CHECKS_HEARTBEAT,
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+
+    async def _base_failing(self) -> list[str]:
+        """The standing checks that fail on the base, for a review: waits for the base's checks when they are
+        still running. One that could not be run tells the review nothing."""
+        if self._base_run is not None:
+            running, self._base_run = self._base_run, None
+            try:
+                self._base = await running
+            except ActivityError as err:
+                workflow.logger.warning("%s: the base's checks did not run: %s", self._where(), err.cause or err)
+        return [check.command for check in self._base.failing]
 
     async def _finish(
         self,
@@ -1433,6 +1492,7 @@ class RunTask:
                 previous_findings=list(before.get("findings") or []),
                 previous_summary=str(before.get("summary") or ""),
                 passed_checks=list(passed_checks or []),
+                base_failing=await self._base_failing(),
             )
         )
         why = ""

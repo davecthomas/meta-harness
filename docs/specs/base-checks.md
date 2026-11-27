@@ -9,9 +9,10 @@ nothing fixed it (`docs/technical-design.md`, Friction rules, "A check that fail
 
 ## What we want
 
-- **The run service checks the base once.** Before a task's first run starts, the run service looks up each of the task's
-  acceptance checks for the repo's base commit. It runs a check with no result on the untouched base, in the
-  task's sandbox, and keeps the result. Later tasks on that commit read it and run nothing.
+- **The run service checks the base once.** Before a task's first run starts, the run service looks up the
+  repo's standing checks for the base's newest commit. It runs a check with no result on the untouched base, in
+  a sandbox of its own beside the task's first run, and keeps the result. Later tasks on that commit read it
+  and run nothing.
 - **A run is told what already fails.** The run's prompt lists the checks that fail on the base, with the end of
   each one's output. The run leaves them alone and does not prove again that they fail.
 - **A reviewer is told the same.** A check on that list does not hold the pull request. A check that passes on
@@ -29,18 +30,20 @@ nothing fixed it (`docs/technical-design.md`, Friction rules, "A check that fail
 
 ## Decisions
 
-- **Which checks.** The task's own acceptance checks, which default to the repo's `default_checks`. No new
-  setting names them.
+- **Which checks.** The repo's standing checks: its registry entry's `default_checks`. A task's own acceptance
+  checks are not run on the base, since one that names what the task builds fails there by design. A repo with
+  no `default_checks` is not checked.
 - **When.** At a task's first run, never on every merge. The run service checks no repo that has no task running,
   and checks a base commit at most once for each check command.
-- **Two tasks at once.** One of them runs the base checks. The other starts without the list, and its reviewer
-  gets it.
+- **No task waits.** The base checks run beside the first run. A run is told what was already known when it
+  started, and its reviewer waits for the rest.
+- **Two tasks at once.** One of them runs the base checks. The other reads the result.
 - **Where the result lives.** A table in the run service's database, keyed by repo, base commit and check
   command, holding whether it passed, its exit code and the last 2,000 characters of its output. Each run of a
   base check is a `base_check_ran` event.
 - **Spend.** The base checks call no model. The fix task counts toward its goal's budget as any task does.
-- **A check that cannot run.** A base check that times out or cannot start counts as failing, with that as its
-  output.
+- **A check that cannot run.** A base check that outlasts its limit (20 minutes, `MH_BASE_CHECK_SECONDS`) counts
+  as failing and says so. A base that cannot be asked about holds no task.
 
 ## Where
 

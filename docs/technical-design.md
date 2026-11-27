@@ -184,7 +184,9 @@ nothing. They are kept as rules so the same stop does not come back.
 - **A check that fails on the base gets fixed.** A reviewer runs
   a check the description calls failing before the change on the base branch.
   One that passes there blocks the pull request. One that fails there too is
-  a follow-up naming the check (prompt `review-v6`).
+  a follow-up naming the check (prompt `review-v6`). The repo's standing
+  checks are run on each base commit once, and every run and review is told
+  what fails there (`run_service/base_checks.py`).
 - **A change and its tests are one task.** A plan gave a whole task, with its
   run, review and merge, to a 28-line test of code another task wrote
   (`planning.prompt`).
@@ -1062,6 +1064,29 @@ checks and a new review like any other. A merge asked for again, by an
 operator or the supervisor, may meet a conflict. It starts with this fix run,
 before any review (behind the `conflict-first` patch). Branch protection or
 any other refusal ends the task `ready` with GitHub's reason.
+
+The run service finds a base branch's failing checks once (`run_service/base_checks.py`,
+behind the `base-checks` patch). A run that met a failing check used to work
+out by itself whether its change broke it, and so did its reviewer. The repo's
+standing checks, its registry entry's `default_checks`, are run on the
+untouched base once for each commit, in the sandbox a task runs in:
+
+- Before a repo task's first run, `known_base_checks` reads what the run
+  service keeps for the base's newest commit (`run_service.base_check`, one row for a repo,
+  commit and command). The run's prompt lists each check that fails there with
+  the end of its output, and says to leave them alone.
+- Checks with no result run beside the first run (`run_base_checks`), in a
+  sandbox of their own, so no task waits for them. Two tasks that start
+  together do not both run them: one holds each check, and the other reads the
+  result. Each check has `MH_BASE_CHECK_SECONDS` (20 minutes) and counts as
+  failing past it. Each one that ends is a `base_check_ran` event.
+- A review waits for those checks and is told which fail on the base: such a
+  failure does not hold the pull request, and a check that passes on the base
+  and fails on the pull request blocks it.
+
+A task's own acceptance checks are not run on the base: one that names what
+the task builds fails there by design. A repo with no `default_checks` is not
+checked. A base that cannot be asked about holds no task.
 
 A clean review is kept (behind the `base-before-review` and
 `clean-review-stands` patches). The task behind one pull request passed review

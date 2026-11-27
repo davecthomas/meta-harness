@@ -814,6 +814,25 @@ REGISTRY: list[EventType] = [
         ),
     ),
     EventType("plan_fix_dismissed", 1, _object({"goal_id": {"type": "string"}}, ["goal_id"])),
+    # One of a repo's standing checks was run on a commit of its base branch, in the sandbox a task runs in
+    # (run_service/base_checks.py). It runs once for a commit. output is the end of what it printed. goal_id
+    # is the goal whose task ran it, when it has one.
+    EventType(
+        "base_check_ran",
+        1,
+        _object(
+            {
+                "repo": {"type": "string"},
+                "commit": {"type": "string"},
+                "command": {"type": "string"},
+                "passed": {"type": "boolean"},
+                "exit_code": {"type": "integer"},
+                "output": {"type": "string"},
+                "goal_id": {"type": "string"},
+            },
+            ["repo", "commit", "command", "passed"],
+        ),
+    ),
     # An operator said one of a plan version's open questions (gaps) is not a problem (planner/plan_api.py).
     # The gap leaves that version's gaps. The actor is the operator.
     EventType(
