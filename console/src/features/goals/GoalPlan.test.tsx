@@ -179,6 +179,10 @@ test("an approval shows its tasks being created, and an answer that never comes 
   await waitFor(() => expect(screen.getByTestId("approve-progress").textContent).toContain("2 of 3 so far"), { timeout: 5000 });
   expect(asks.filter((a) => a.endsWith("/approve")).length).toBe(1);
 
+  // The operator may close it: the goal starts the same.
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "" }));
+  await waitFor(() => expect(screen.queryByTestId("approve-progress")).toBeNull());
+
   status = "active";
   await waitFor(() => expect(approved).toEqual([1]), { timeout: 5000 });
   await waitFor(() => expect(screen.queryByTestId("approve-progress")).toBeNull());
