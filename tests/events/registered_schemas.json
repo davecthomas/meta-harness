@@ -938,6 +938,26 @@
     ],
     "type": "object"
   },
+  "plan_gap_dismissed v1": {
+    "additionalProperties": true,
+    "properties": {
+      "gap": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "goal_id",
+      "version",
+      "gap"
+    ],
+    "type": "object"
+  },
   "plan_fixes_assessed v1": {
     "additionalProperties": true,
     "properties": {
