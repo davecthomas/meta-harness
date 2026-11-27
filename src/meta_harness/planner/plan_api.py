@@ -4,6 +4,7 @@
     PUT  /v1/goals/{id}/plan      save edited drafts as the next version, and cancel a running review
     POST /v1/goals/{id}/replan    start a new planning task, with a note; a running review goes on
     POST /v1/goals/{id}/approve   cancel a running review, create the plan's issues and make the goal active
+    POST /v1/goals/{id}/plan/gaps/dismiss   say one of the newest version's open questions is not a problem
     POST /v1/goals/enrich, /v1/goals/{id}/enrich/accept   a richer statement, and saving it (enrich.py)
 
 Registered by the planner service's create_app, which hands over what the routes share with the rest.
@@ -73,6 +74,12 @@ class ApproveIn(BaseModel):
 
 class ReplanIn(BaseModel):
     note: str = Field(default="", max_length=4000)
+
+
+class GapDismissIn(BaseModel):
+    # The plan version the operator read the gap on, and the gap as it was shown.
+    version: int
+    gap: str = Field(min_length=1, max_length=4000)
 
 
 def _limits(goal: dict) -> tuple[dict[str, str], int | None]:
@@ -316,6 +323,30 @@ def register(
         events.emit(
             "plan_findings_settled",
             {"goal_id": goal_id, "findings": [finding_id], "how": "dismissed"},
+            actor=who,
+            tags={"goal_id": goal_id},
+        )
+        return shown(goal)
+
+    @app.post("/v1/goals/{goal_id}/plan/gaps/dismiss")
+    def dismiss_gap(goal_id: str, body: GapDismissIn, who: str = Depends(operator)) -> dict:
+        """Say one of the plan's open questions is not a problem: it leaves the newest version's gaps, and the
+        version keeps who dismissed it. A fix the planner suggested for that version is left behind with it."""
+        goal = planning_goal(goal_id)
+        with db.connect(autocommit=True) as conn:
+            latest = plans.latest(conn, goal_id)
+        if latest is None or latest["version"] != body.version:
+            raise HTTPException(
+                status_code=409,
+                detail=f"version {body.version} is not the plan's newest: reload the plan and look again",
+            )
+        if not suggestions.dismiss_gap(goal_id, body.version, body.gap, who):
+            raise HTTPException(
+                status_code=404, detail=f"version {body.version} of the plan has no such open question. Reload the plan"
+            )
+        events.emit(
+            "plan_gap_dismissed",
+            {"goal_id": goal_id, "version": body.version, "gap": body.gap},
             actor=who,
             tags={"goal_id": goal_id},
         )
