@@ -395,6 +395,8 @@ export const goalsApi = {
   savePlan: (id: string, drafts: PlanDraft[], items?: PlanItem[]) =>
     call<GoalPlan>(`/v1/goals/${id}/plan`, { method: "PUT", body: JSON.stringify(items ? { drafts, items } : { drafts }) }),
   // The planner's suggested fix for the plan: make it the plan's next version, or leave it behind.
+  // Start the task that fixes a base branch this goal's tasks found failing its checks.
+  fixBase: (id: string) => call<{ goal_id: string; started: string[] }>(`/v1/goals/${id}/base-fix`, { method: "POST" }),
   acceptFix: (id: string) => call<unknown>(`/v1/goals/${id}/suggestion/accept`, { method: "POST" }),
   dismissFix: (id: string) => call<unknown>(`/v1/goals/${id}/suggestion/dismiss`, { method: "POST" }),
   // Put back the plan the planner's applied fix replaced.

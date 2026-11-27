@@ -176,6 +176,20 @@ test("the planner's fix to a plan is offered as Update the plan, with what it ch
   expect(within(step).queryByRole("button", { name: /Accept the fix|Approve the plan/ })).toBeNull();
 });
 
+test("a base branch that fails its checks is offered as Fix it, which starts its fix task", async () => {
+  const needing = { ...report, needs_you: [{ goal_id: "g-2", goal: "Keep tasks through compaction", what: "The base fails.", why: "" }] };
+  const said = "meta-harness's base branch fails 3 checks in the sandbox, before any task's change. Each task is told so, and one task can fix it.";
+  needs.current = [
+    { key: "fix_base:g-2", asks: "Fix the base branch", title: "", since: "", goal: "Keep tasks through compaction", what: said, ref: "", action: "fix_base", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2" },
+  ];
+  const calls = renderPanel((url) => (url.endsWith("/base-fix") ? json({ goal_id: "g-2", started: ["mh:1"] }) : json({ report: needing, written: true })));
+
+  const [step] = await screen.findAllByTestId("report-action");
+  expect(step.textContent).toContain(said);
+  fireEvent.click(within(step).getByRole("button", { name: "Fix it" }));
+  await waitFor(() => expect(calls.some((c) => c.url === "/v1/goals/g-2/base-fix" && c.init?.method === "POST")).toBe(true));
+});
+
 test("an answer carries the buttons for what it suggests, each beside the goal it is about", async () => {
   const actions = [
     { what: "", ref: "", action: "open_goal", says: "plan", task_id: "", pr_url: "", goal_id: "g-2", label: "mh:g-2", goal: "Keep tasks through compaction" },

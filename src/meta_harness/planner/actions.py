@@ -265,6 +265,7 @@ def for_goal(
     plan: dict | None = None,
     suggestion: dict | None = None,
     most: int = MAX_FOR_GOAL,
+    bases: list[dict] | None = None,
 ) -> list[dict]:
     """What the goal needs from the operator now, from its records alone, each as the action a page offers:
     most urgent first, `MAX_FOR_GOAL` at most. No model has a say, so a page that lists goals (the Overview)
@@ -297,6 +298,10 @@ def for_goal(
     # without it. The fix is decided first, and the approval is offered on the version that follows.
     if any(need["action"] == "accept_fix" for need in found):
         found = [need for need in found if need["action"] != "approve_plan"]
+    # A base branch that fails its checks, which this goal's operator is asked to have fixed (base_fix.py).
+    found += [
+        {"what": base_said(base), "ref": "", "action": "fix_base", "task_id": "", "pr_url": ""} for base in bases or []
+    ]
     by_ref = {link["ref"]: link for link in links}
     return [
         {
@@ -311,6 +316,16 @@ def for_goal(
         }
         for need in found[:most]
     ]
+
+
+def base_said(base: dict) -> str:
+    """One sentence on a failing base the operator is asked about (planner.base_fix's row)."""
+    count = len(base.get("checks") or [])
+    name = str(base.get("repo") or "The repo").rsplit("/", 1)[-1]
+    return (
+        f"{name}'s base branch fails {count} check{'' if count == 1 else 's'} in the sandbox, before any "
+        "task's change. Each task is told so, and one task can fix it."
+    )
 
 
 def waits_on_operator(task: dict, auto_merge: bool = False) -> bool:
@@ -388,6 +403,8 @@ ASKS = {
     "open_task": "Look at",
     # A setting with a safe default that was set badly, so its service runs on the default (fallback.py).
     "fix_setting": "Fix a setting",
+    # A repo's base branch fails its standing checks, and a goal that asks before it acts found it.
+    "fix_base": "Fix the base branch",
 }
 
 
@@ -419,6 +436,8 @@ def said(need: dict, goal: dict, link: dict | None, task: dict | None, plan: dic
     that lists goals shows it, so "the fix" or "the plan" is never a button with nothing to say which."""
     name = (task or {}).get("name") or (task or {}).get("title") or (link or {}).get("title") or "A task"
     action = need["action"]
+    if action == "fix_base":
+        return need.get("what") or "The base branch fails its checks in the sandbox."
     if action == "accept_fix":
         return "The planner drafted a fix for gaps in this goal's plan. Accepting it makes a new plan version."
     if action == "approve_plan":

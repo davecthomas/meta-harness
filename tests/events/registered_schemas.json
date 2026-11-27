@@ -2247,5 +2247,28 @@
       "passed"
     ],
     "additionalProperties": true
+  },
+  "base_fix_started v1": {
+    "type": "object",
+    "properties": {
+      "goal_id": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "commit": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "goal_id",
+      "repo",
+      "ref"
+    ],
+    "additionalProperties": true
   }
 }

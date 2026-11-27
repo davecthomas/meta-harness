@@ -47,7 +47,9 @@ def of_goal(goal: dict, tasks: list[dict], most: int = ALL) -> list[dict]:
         plan = plan_review.marked(goal["id"], plan)
     if "budget_state" not in goal:
         goal = budget.view(dict(goal), goal.get("budget_policy") or "block")
-    return actions.for_goal(goal, links, tasks, plan, suggestion, most)
+    from meta_harness.planner import base_fix
+
+    return actions.for_goal(goal, links, tasks, plan, suggestion, most, base_fix.asked(goal["id"]))
 
 
 def by_id(goal_id: str, tasks: Any, most: int = ALL) -> tuple[dict, list[dict]]:
