@@ -22,7 +22,6 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -294,24 +293,39 @@ def _untouched(goal: dict, version: int) -> bool:
     )
 
 
-def dismiss_gap(goal_id: str, version: int, gap: str, who: str) -> bool:
-    """Takes a gap out of that plan version (plans.dismiss_gap), and leaves behind any open fix for it in the
-    same transaction: the fix was drafted from the version's old gaps, and accepting it would bring the gap
-    back. False when the version has no such gap; nothing is changed then."""
+def dismiss_gap(goal_id: str, version: int, gap: str, who: str) -> tuple[bool, bool]:
+    """Takes a gap out of that plan version (plans.dismiss_gap). Returns whether the version held the gap, and
+    whether an open fix was left behind with it, in the same transaction.
+
+    A fix is left behind only when every change it makes is for a gap the operator has now dismissed: nothing
+    it would do is still wanted. A fix that also settles another gap stays, and accepting it leaves the
+    dismissed gaps out (accept)."""
     with db.connect(autocommit=True) as conn, conn.transaction():
         if not plans.dismiss_gap(conn, goal_id, version, gap, who):
-            return False
+            return False, False
+        gone = {d["gap"] for d in plans.at(conn, goal_id, version)["dismissed_gaps"]}
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT fixes FROM planner.plan_suggestion WHERE goal_id = %s AND for_version = %s AND status = 'open'",
+                (goal_id, version),
+            )
+            row = cur.fetchone()
+        fixes = (row or {}).get("fixes") or []
+        if row is None or not fixes or any(str(f.get("gap") or "").strip() not in gone for f in fixes):
+            return True, False
         conn.execute(
             "UPDATE planner.plan_suggestion SET status = 'dismissed', updated_at = now() "
             "WHERE goal_id = %s AND for_version = %s AND status = 'open'",
             (goal_id, version),
         )
-    return True
+    return True, True
 
 
-def _after_dismissal(plan: dict, created_at: datetime) -> bool:
-    """Whether a gap of the plan version was dismissed after a suggestion made at created_at."""
-    return any(datetime.fromisoformat(str(d["at"])) > created_at for d in plan.get("dismissed_gaps") or [])
+def _still_open(plan: dict, gaps: list[str]) -> list[str]:
+    """A fix's gaps without those the operator dismissed on the plan version it was drafted from: the fix read
+    them before the dismissal, and a version made from it does not bring them back."""
+    gone = {d["gap"] for d in plan.get("dismissed_gaps") or []}
+    return [g for g in gaps or [] if g not in gone]
 
 
 def applied(goal_id: str) -> dict | None:
@@ -401,8 +415,7 @@ def accept(goal: dict, who: str, events: Any) -> dict:
     """Makes the open suggestion the goal's next plan version. Returns that plan.
 
     Raises:
-        SuggestionError: The goal has no open suggestion for its latest plan, or one of that plan's gaps was
-            dismissed after the suggestion was made: it still holds the gap.
+        SuggestionError: The goal has no open suggestion for its latest plan.
     """
     with db.connect(autocommit=True) as conn, conn.cursor(row_factory=dict_row) as cur:
         latest = plans.latest(conn, goal["id"])
@@ -415,11 +428,6 @@ def accept(goal: dict, who: str, events: Any) -> dict:
             raise SuggestionError(
                 "this goal has no fix waiting for its current plan: the plan changed since it was suggested. "
                 "Ask for an update to see where the plan stands"
-            )
-        if _after_dismissal(latest, row["created_at"]):
-            raise SuggestionError(
-                "this fix was drafted before one of the plan's open questions was dismissed, and would bring it "
-                "back. Dismiss the fix, or plan again"
             )
         invalid = plans.validate(row["drafts"], goal["repos"], row["items"], row["issues"])
         note = "The planner's suggested fix: " + "; ".join(f["change"] for f in row["fixes"])
@@ -434,7 +442,7 @@ def accept(goal: dict, who: str, events: Any) -> dict:
             note=note[:2000],
             items=row["items"],
             summary=row["summary"],
-            gaps=row["gaps"],
+            gaps=_still_open(latest, row["gaps"]),
             issues=row["issues"],
         )
         conn.execute(

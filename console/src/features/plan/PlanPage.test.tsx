@@ -341,3 +341,20 @@ test("Send needs an answer, posts the note for the planner, and reads the needs 
   expect(posts[0].body).toEqual({ note: "About " + QUESTIONS[0] + ": Yes, add it." });
   await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("approve_plan"));
 });
+
+test("an answer typed on one question stays when another is dismissed", async () => {
+  await openPlan(QUESTIONS);
+  const second = screen.getByRole("textbox", { name: "Answer: " + QUESTIONS[1] });
+  fireEvent.change(second, { target: { value: "Email links only." } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Not a problem" })[0]);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(1));
+  expect((screen.getByRole("textbox", { name: "Answer: " + QUESTIONS[1] }) as HTMLInputElement).value).toBe("Email links only.");
+});
+
+test("a canceled review of an earlier version says which, and claims no count its cards contradict", () => {
+  const plan = { ...reviewed([finding("r1-1")], { state: "canceled", version: 1, counts: { found: 1, fixed: 0, open: 0, advice: 0, dismissed: 0 } }), review_usd: "4.00" } as unknown as Plan;
+  shown(<ReviewPart plan={plan} goal={GOAL} onChanged={() => undefined} />);
+  const says = screen.getByTestId("plan-review-says").textContent ?? "";
+  expect(says).toContain("was canceled. It recorded 1 problem");
+  expect(says).not.toContain("0 open");
+});

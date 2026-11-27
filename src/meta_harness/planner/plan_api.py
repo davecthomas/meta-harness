@@ -334,7 +334,7 @@ def register(
     @app.post("/v1/goals/{goal_id}/plan/gaps/dismiss")
     def dismiss_gap(goal_id: str, body: GapDismissIn, who: str = Depends(operator)) -> dict:
         """Say one of the plan's open questions is not a problem: it leaves the newest version's gaps, and the
-        version keeps who dismissed it. A fix the planner suggested for that version is left behind with it."""
+        version keeps who dismissed it. A fix the planner suggested only for dismissed questions goes with them."""
         goal = planning_goal(goal_id)
         with db.connect(autocommit=True) as conn:
             latest = plans.latest(conn, goal_id)
@@ -343,7 +343,8 @@ def register(
                 status_code=409,
                 detail=f"version {body.version} is not the plan's newest: reload the plan and look again",
             )
-        if not suggestions.dismiss_gap(goal_id, body.version, body.gap, who):
+        held, fix_left = suggestions.dismiss_gap(goal_id, body.version, body.gap, who)
+        if not held:
             raise HTTPException(
                 status_code=404, detail=f"version {body.version} of the plan has no such open question. Reload the plan"
             )
@@ -353,6 +354,9 @@ def register(
             actor=who,
             tags={"goal_id": goal_id},
         )
+        if fix_left:
+            # The planner's fix was only for questions now dismissed: it goes with them, on the record.
+            events.emit("plan_fix_dismissed", {"goal_id": goal_id}, actor=who, tags={"goal_id": goal_id})
         return shown(goal)
 
     class ReviewSettingIn(BaseModel):
@@ -444,8 +448,6 @@ def register(
                 except Exception as err:  # A missed renewal is retried at the next; the claim still stands.
                     log.warning("could not renew the approval claim on goal %s: %s", goal_id, err)
 
-        # A review still reading the plan is of no use once the operator approves it as it stands.
-        await asyncio.to_thread(stop_review, goal_id, who, "the operator approved the plan")
         # One approval at a time. It writes each new task to the tracker, which outlasts a browser's wait, and
         # an operator who saw no answer pressed again: each press created every issue once more.
         if not await asyncio.to_thread(claim):
@@ -458,6 +460,17 @@ def register(
             )
         renewing = asyncio.create_task(alive())
         try:
+
+            def approvable() -> bool:
+                with db.connect(autocommit=True) as conn:
+                    latest = plans.latest(conn, goal_id)
+                return bool(latest) and not latest["invalid"]
+
+            # A review still reading the plan is of no use once the operator approves it as it stands. Only
+            # once this approval is the one that runs, on a plan it will not refuse: an approval refused (a
+            # second press, a plan that cannot be approved) used to end the review all the same.
+            if await asyncio.to_thread(approvable):
+                await asyncio.to_thread(stop_review, goal_id, who, "the operator approved the plan")
             await planning.approve(
                 goal,
                 writer if tracked or kept is None else kept,

@@ -1250,7 +1250,7 @@ def _closing() -> str:
 
 @activity.defn
 async def loop_prompt(request: LoopPromptRequest) -> str:
-    """A review or fix run's prompt, from prompts/review-v5.txt or prompts/fix-v2.txt. It closes with the
+    """A review or fix run's prompt, from prompts/review-v6.txt or prompts/fix-v2.txt. It closes with the
     charter (charter.py), so the reviewer and the fix are held to the same bar, then the writing rules. A review's shows the pull
     request's description as it stands, since the reviewer judges what it explains (why a file outside the
     task's paths changed) and has no other way to read it."""

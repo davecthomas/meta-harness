@@ -270,8 +270,26 @@ def _dismiss_gap(client, goal_id: str, version: int, gap: str):
     )
 
 
-def test_dismissing_a_gap_leaves_an_open_fix_for_that_version_behind(world, waiting):
-    """The fix was drafted from the version's gaps before the dismissal: accepting it would bring the gap back."""
+def test_dismissing_another_gap_keeps_the_fix_and_accepting_it_leaves_the_dismissed_gap_out(world, waiting):
+    """The fix settles the clash. Dismissing the other question used to throw the fix away without a word."""
+    client, events, tasks = world
+    goal, plan = _planned(client, events, tasks)
+    task = _start(goal, plan, tasks, events, Assessor())
+    _end(events, tasks, task, [draft("api", ("store",))], [OPEN])
+    asyncio.run(suggestions.collect(goal, tasks, events))
+
+    dismissed = _dismiss_gap(client, goal["id"], 1, OPEN)
+
+    assert dismissed.status_code == 200, dismissed.text
+    assert dismissed.json()["suggestion"] is not None and _status(goal["id"], 1) == "open"
+    assert "plan_fix_dismissed" not in events.types()
+    accepted = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
+    assert accepted.status_code == 200, accepted.text
+    shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
+    assert shown["plan"]["version"] == 2 and shown["plan"]["gaps"] == [], "the fix read the question before it went"
+
+
+def test_dismissing_the_gap_a_fix_is_for_leaves_the_fix_behind_on_the_record(world, waiting):
     client, events, tasks = world
     goal, plan = _planned(client, events, tasks)
     task = _start(goal, plan, tasks, events, Assessor())
@@ -279,18 +297,18 @@ def test_dismissing_a_gap_leaves_an_open_fix_for_that_version_behind(world, wait
     asyncio.run(suggestions.collect(goal, tasks, events))
     assert _status(goal["id"], 1) == "open"
 
-    dismissed = _dismiss_gap(client, goal["id"], 1, OPEN)
+    dismissed = _dismiss_gap(client, goal["id"], 1, CLASH)
 
     assert dismissed.status_code == 200, dismissed.text
     assert dismissed.json()["suggestion"] is None and _status(goal["id"], 1) == "dismissed"
-    assert dismissed.json()["plan"]["gaps"] == [CLASH]
+    assert events.types().count("plan_fix_dismissed") == 1, "said in the record, as dismissing it by hand is"
     refused = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
     assert refused.status_code == 409
     assert "plan_fix_accepted" not in events.types()
 
 
-def test_a_fix_drafted_before_a_dismissal_neither_applies_itself_nor_is_accepted(world):
-    """A fix still drafting when the gap was dismissed becomes open later, with the old gaps."""
+def test_a_fix_still_drafting_at_a_dismissal_waits_and_is_accepted_without_the_dismissed_gap(world):
+    """It becomes open later, holding the old gaps: it does not apply itself, and it can still be accepted."""
     client, events, tasks = world
     goal, plan = _planned(client, events, tasks)
     task = _start(goal, plan, tasks, events, Assessor())
@@ -302,10 +320,7 @@ def test_a_fix_drafted_before_a_dismissal_neither_applies_itself_nor_is_accepted
     collected = asyncio.run(suggestions.collect(goal, tasks, events))
 
     assert collected["status"] == "open", "a version with a dismissed gap is no longer the planner's own"
-    refused = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
-    assert refused.status_code == 409 and "before one of the plan's open questions" in refused.json()["detail"]
-    with pytest.raises(suggestions.SuggestionError):
-        suggestions.accept(goal, "dave", events)
+    accepted = client.post(f"/v1/goals/{goal['id']}/suggestion/accept", headers=OPERATOR)
+    assert accepted.status_code == 200, accepted.text
     shown = client.get(f"/v1/goals/{goal['id']}/plan", headers=OPERATOR).json()
-    assert (shown["plan"]["version"], shown["plan"]["gaps"]) == (1, [CLASH])
-    assert "plan_fix_accepted" not in events.types()
+    assert (shown["plan"]["version"], shown["plan"]["gaps"]) == (2, [])

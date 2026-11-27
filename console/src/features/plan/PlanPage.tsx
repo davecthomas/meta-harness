@@ -260,7 +260,7 @@ export function ReviewPart({ plan, goal, onChanged, openInDecision = false }: { 
     : review.state === "running"
       ? `${review.model} is reading the plan now.`
       : review.state === "canceled" && findings.length > 0
-        ? `The review by ${review.model} was canceled. It recorded ${findings.length} problem${findings.length === 1 ? "" : "s"}: ${review.counts.fixed} fixed, ${review.counts.open} open.`
+        ? `The review by ${review.model} was canceled. It recorded ${findings.length} problem${findings.length === 1 ? "" : "s"}${review.version !== plan.plan?.version ? ` in version ${review.version} of the plan` : ""}.`
         : review.state === "failed" || review.state === "canceled"
         ? `The review by ${review.model} did not finish, so it says nothing about the plan.`
         : review.counts.found === 0
@@ -343,8 +343,9 @@ export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningU
   return (
     <Alert color="yellow" variant="light" p="sm" title="Weigh this first" data-testid="plan-questions">
       <List size="sm" spacing={4}>
-        {shown.map((gap, i) => (
-          <List.Item key={`${i}:${gap}`}>
+        {/* Keyed by the question, so an answer typed on one stays when another is dismissed. */}
+        {shown.map((gap) => (
+          <List.Item key={gap}>
             {gap}
             {onSend && onDismiss && <QuestionActions gap={gap} busy={busy} onSend={onSend} onDismiss={onDismiss} planningUsd={planningUsd} />}
           </List.Item>

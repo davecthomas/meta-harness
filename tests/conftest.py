@@ -90,3 +90,53 @@ def local_repos_under_tmp(monkeypatch, tmp_path_factory):
     """The bare repos tests make sit under pytest's temporary directory, so that is the one place a task may
     name a local repo (meta_harness.local_repos)."""
     monkeypatch.setenv("MH_LOCAL_REPO_ROOTS", str(tmp_path_factory.getbasetemp()))
+
+
+def _allowed_hosts() -> set[str]:
+    """Where a test may connect: this machine, and the test database's host."""
+    return {"localhost", "127.0.0.1", "::1", "0.0.0.0", "", urlsplit(TEST_DATABASE_URL).hostname or ""}
+
+
+@pytest.fixture(autouse=True)
+def no_outside_network(monkeypatch):
+    """No test reaches a host outside this machine and its database: the name does not resolve, at once.
+
+    A test that left a client unfaked used to pass or fail by the network it ran on. Where a made-up host
+    was refused at once the test passed; in a task's sandbox the lookup hung, a wait in the code under test
+    ran out, and three overview tests failed there on every run while passing everywhere else.
+    """
+    import ipaddress
+    import socket
+
+    allowed = _allowed_hosts()
+    real_getaddrinfo, real_connect = socket.getaddrinfo, socket.socket.connect
+
+    def local(host: object) -> bool:
+        name = host.decode() if isinstance(host, bytes) else str(host or "")
+        if name in allowed:
+            return True
+        try:
+            return ipaddress.ip_address(name).is_loopback
+        except ValueError:
+            return False
+
+    def getaddrinfo(host, *args, **kwargs):
+        if not local(host):
+            raise socket.gaierror(socket.EAI_NONAME, f"tests reach no outside host: {host!r} was asked for")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    resolved: set[str] = set()
+
+    def remembering(host, *args, **kwargs):
+        found = getaddrinfo(host, *args, **kwargs)
+        resolved.update(str(info[4][0]) for info in found)
+        return found
+
+    def connect(self, address):
+        # A Unix socket's address is a path; an allowed name's addresses were resolved through getaddrinfo.
+        if isinstance(address, tuple) and not local(address[0]) and str(address[0]) not in resolved:
+            raise ConnectionRefusedError(f"tests reach no outside host: {address[0]!r} was asked for")
+        return real_connect(self, address)
+
+    monkeypatch.setattr(socket, "getaddrinfo", remembering)
+    monkeypatch.setattr(socket.socket, "connect", connect)
