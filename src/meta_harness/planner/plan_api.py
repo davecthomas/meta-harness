@@ -1,6 +1,7 @@
 """The plan routes of the planner's API: read a feature goal's plan, edit it, ask for a new one, approve it.
 
-    GET  /v1/goals/{id}/plan      the newest plan version, and the planning task in flight if there is one
+    GET  /v1/goals/{id}/plan      the newest plan version, and the planning task in flight if there is one;
+                                  `planning_usd` is one planning run's limit, null when none is set
     PUT  /v1/goals/{id}/plan      save edited drafts as the next version, and cancel a running review
     POST /v1/goals/{id}/replan    start a new planning task, with a note; a running review goes on
     POST /v1/goals/{id}/approve   cancel a running review, create the plan's issues and make the goal active
@@ -161,6 +162,8 @@ def register(
             "review": review,
             # What a review started by the Review button may spend: the limit the review runs under.
             "review_usd": _review_usd(),
+            # The spend limit of one planning run, for the answer button's label; None when no limit is set.
+            "planning_usd": _planning_usd(),
             # The plan's state and the one thing it asks now, with its buttons (actions.plan_decision): the Plan
             # page draws this and decides nothing itself.
             "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd(), review, _review_usd()),
