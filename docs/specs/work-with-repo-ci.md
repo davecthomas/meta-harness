@@ -157,7 +157,6 @@ This repo is the first one Muxxy works in, so its CI should give Muxxy what the 
 - "sandbox runs this repo's checks" becomes a required check, and the branch's rules bind admins.
 - CI downloads the Temporal CLI at a fixed version and checks it against its hash.
 - `pytest` runs across the runner's cores.
-- A run builds the sandbox images once, and its jobs share them.
 - `pip-audit` and `npm audit` run on each pull request at high severity; CodeQL and a scan of the sandbox
   image run nightly and on main.
 - Each pull request reports a type check of `src/` and the coverage of its changed lines.
@@ -188,7 +187,8 @@ In order. Each is one pull request unless it says otherwise.
 6. **Repos in the console**: `GET /v1/repos/health`, the Repos page with its Health and
    Settings tabs, and the health marker. The endpoint and the page go in first, then the marker on New goal
    and a goal's page.
-7. **This repo's CI**: the required check and admin rule, the pinned Temporal CLI, `pytest` across cores and
-   shared images. The rules and the pin go in first, then the speed.
+7. **This repo's CI**: `pytest` across cores and the pinned Temporal CLI, then the required check and the
+   admin rule, which are settings of the repo. Sharing the sandbox images between a run's jobs is left out:
+   each job builds them in 24 seconds, less than passing them between jobs would take.
 8. **Audits and scans in this repo's CI**, then **a security alert becomes an issue**, which reads them.
 9. **A type check and coverage of changed lines**, with the reviewer told which changed lines no test ran.

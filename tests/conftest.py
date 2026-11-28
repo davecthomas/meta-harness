@@ -20,7 +20,10 @@ def _test_database_url() -> str:
     if explicit:
         return explicit
     parts = urlsplit(db.database_url())
-    return urlunsplit(parts._replace(path="/mh_test"))
+    # Run across cores (pytest -n), each worker has a database of its own: tests that read a whole table, such
+    # as every goal with no title, then meet only the rows their own worker wrote, as when the suite runs alone.
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+    return urlunsplit(parts._replace(path=f"/mh_test_{worker}" if worker else "/mh_test"))
 
 
 def _ensure_database(url: str) -> None:
