@@ -48,7 +48,7 @@ const dollars = (amount: string | null | undefined): string => {
 // The one thing the plan asks now, in a sentence or two, beside the buttons that answer it: the first is the
 // recommended one. The service decides what it says and offers; this draws it. It stays in view as the page
 // scrolls, so the decision is never more than a glance away.
-export function DecisionBar({ decision, onAct, busy, gaps = [], extra, onSend, onDismissGap, planningUsd }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[]; extra?: ReactNode; onSend?: (gap: string, answer: string) => void; onDismissGap?: (gap: string) => void; planningUsd?: string | null }) {
+export function DecisionBar({ decision, onAct, busy, gaps = [], extra, onSend, onDismissGap, planningUsd, choices }: { decision: PlanAsk; onAct: (action: PlanAsk["buttons"][number]["action"]) => void; busy: boolean; gaps?: string[]; extra?: ReactNode; onSend?: (gap: string, answer: string) => void; onDismissGap?: (gap: string) => void; planningUsd?: string | null; choices?: Record<string, string[]> }) {
   const working = decision.state === "drafting" || decision.state === "improving";
   const weigh = decision.buttons.length > 0 ? gaps : [];
   const weighFirst = weigh.length > 0 || !!extra;
@@ -84,7 +84,7 @@ export function DecisionBar({ decision, onAct, busy, gaps = [], extra, onSend, o
       ) : (
         <Stack gap="sm">
           {says}
-          {weigh.length > 0 && <OpenQuestions gaps={weigh} busy={busy} onSend={onSend} onDismiss={onDismissGap} planningUsd={planningUsd} />}
+          {weigh.length > 0 && <OpenQuestions gaps={weigh} busy={busy} onSend={onSend} onDismiss={onDismissGap} planningUsd={planningUsd} choices={choices} />}
           {extra}
           <Group justify="flex-end">{buttons}</Group>
         </Stack>
@@ -334,7 +334,7 @@ export function ReviewPart({ plan, goal, onChanged, openInDecision = false }: { 
 
 // What only the operator can settle, a few at most in view.
 // With onSend and onDismiss, each item has "Fine as planned" and "Change it", which opens an answer field.
-export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningUsd }: { gaps: string[]; busy?: boolean; onSend?: (gap: string, answer: string) => void; onDismiss?: (gap: string) => void; planningUsd?: string | null }) {
+export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningUsd, choices }: { gaps: string[]; busy?: boolean; onSend?: (gap: string, answer: string) => void; onDismiss?: (gap: string) => void; planningUsd?: string | null; choices?: Record<string, string[]> }) {
   const [all, setAll] = useState(false);
   if (!gaps.length) return null;
   const shown = all ? gaps : gaps.slice(0, SHOWN_BEFORE_COUNTING);
@@ -347,7 +347,7 @@ export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningU
         {shown.map((gap) => (
           <List.Item key={gap}>
             {gap}
-            {onSend && onDismiss && <QuestionActions gap={gap} busy={busy} onSend={onSend} onDismiss={onDismiss} planningUsd={planningUsd} />}
+            {onSend && onDismiss && <QuestionActions gap={gap} busy={busy} onSend={onSend} onDismiss={onDismiss} planningUsd={planningUsd} options={choices?.[gap]} />}
           </List.Item>
         ))}
       </List>
@@ -357,25 +357,42 @@ export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningU
 }
 
 // What an operator does about one open question. The planner has usually decided something and said so, so the
-// answer most often is yes: one press, "Fine as planned", settles it. Typing is asked of nobody: "Change it"
-// opens the answer field for an operator who wants something else, and sending it plans again.
-function QuestionActions({ gap, busy, onSend, onDismiss, planningUsd }: { gap: string; busy: boolean; onSend: (gap: string, answer: string) => void; onDismiss: (gap: string) => void; planningUsd?: string | null }) {
+// answer most often is yes: one press settles it. Typing is asked of nobody.
+// - When the planner offered answers (options), each is a button. The first is what the plan does now, and
+//   pressing it settles the question as planned. Any other plans again with that answer.
+// - With none offered, "Fine as planned" settles it.
+// "Something else" (or "Change it") opens the answer field for an operator who wants what no button says.
+function QuestionActions({ gap, busy, onSend, onDismiss, planningUsd, options }: { gap: string; busy: boolean; onSend: (gap: string, answer: string) => void; onDismiss: (gap: string) => void; planningUsd?: string | null; options?: string[] }) {
   const [changing, setChanging] = useState(false);
   const [answer, setAnswer] = useState("");
   const text = answer.trim();
+  const offered = options && options.length >= 2 ? options : null;
+  const again = planningUsd ? ` (up to ${dollars(planningUsd)})` : "";
   if (!changing) {
     return (
-      <Group gap="xs" mt={4} wrap="wrap">
-        <Button size="xs" color="teal" variant="light" disabled={busy} onClick={() => onDismiss(gap)}>Fine as planned</Button>
-        <Button size="xs" variant="default" disabled={busy} onClick={() => setChanging(true)}>Change it</Button>
-      </Group>
+      <Stack gap={2} mt={4}>
+        <Group gap="xs" wrap="wrap" data-testid="question-answers">
+          {offered ? (
+            <>
+              <Button size="xs" color="teal" variant="light" disabled={busy} onClick={() => onDismiss(gap)}>{offered[0]}, as planned</Button>
+              {offered.slice(1).map((option) => (
+                <Button key={option} size="xs" variant="default" disabled={busy} onClick={() => onSend(gap, option)}>{option}</Button>
+              ))}
+            </>
+          ) : (
+            <Button size="xs" color="teal" variant="light" disabled={busy} onClick={() => onDismiss(gap)}>Fine as planned</Button>
+          )}
+          <Button size="xs" variant="default" disabled={busy} onClick={() => setChanging(true)}>{offered ? "Something else" : "Change it"}</Button>
+        </Group>
+        {offered && <Text size="xs" c="dimmed">Any answer but the first plans again{again}.</Text>}
+      </Stack>
     );
   }
   return (
     <Group gap="xs" mt={4} wrap="wrap" align="flex-end">
       <TextInput size="xs" style={{ flex: "1 1 220px" }} aria-label={`What to change: ${gap}`} placeholder="What you want in its place" autoFocus value={answer} onChange={(event) => setAnswer(event.currentTarget.value)} />
       <Button size="xs" variant="default" disabled={busy || !text} onClick={() => onSend(gap, text)}>
-        {`Send to the planner${planningUsd ? ` (up to ${dollars(planningUsd)})` : ""}`}
+        {`Send to the planner${again}`}
       </Button>
       <Button size="xs" variant="subtle" color="gray" disabled={busy} onClick={() => { setChanging(false); setAnswer(""); }}>Cancel</Button>
     </Group>
@@ -582,7 +599,7 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
   return (
     <Stack gap="xs" mb="md" data-testid="plan-body">
       <ErrorAlert error={error} />
-      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} extra={inBox} onSend={(g, a) => void sendAnswer(g, a)} onDismissGap={(g) => void dismissGap(g)} planningUsd={plan?.planning_usd} />}
+      {decision && <DecisionBar decision={decision} onAct={(action) => void act(action)} busy={busy} gaps={planning ? plan?.plan?.gaps ?? [] : []} extra={inBox} onSend={(g, a) => void sendAnswer(g, a)} onDismissGap={(g) => void dismissGap(g)} planningUsd={plan?.planning_usd} choices={plan?.plan?.gap_choices} />}
       {/* The figures once: not under a decision whose sentence already says what the plan may spend. */}
       {plan?.glance && !(decision && plan.glance.may_spend_usd !== null && decision.says.includes(dollars(plan.glance.may_spend_usd))) && <Glance glance={plan.glance} />}
       {/* A review that still asks something (it is running, or left a problem open) comes before the tasks.

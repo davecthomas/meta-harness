@@ -212,6 +212,9 @@ def prompt(
         "have no gaps: pass an empty list then. A gap is not a note on how the tasks fit together, a reassurance",
         "that something is safe, or anything the summary already says. Write each gap as what is missing or",
         "undecided and what the operator can do about it.",
+        "When a gap is a choice between a few answers, pass them as plan_summary's choices: the gap's exact text",
+        "and two to four answers of a few words each, the first the one the plan takes now. The operator answers",
+        "with one press. Offer none for a gap no short list covers.",
         "The summary and the gaps are the only part of the plan written for the operator, and the operator is not",
         "reading the code. They decide in a few seconds whether to trust the plan, so write those two this way,",
         "whatever detail the tasks' own bodies need:",
@@ -411,6 +414,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
     issues = await asyncio.to_thread(issues_given)
     found = await gather(goal, task, events, issues, base=await asyncio.to_thread(revises))
     drafts, items, summary, gaps, invalid = (found[k] for k in ("drafts", "items", "summary", "gaps", "invalid"))
+    gap_choices = found.get("gap_choices") or {}
     stopped = stopped_at(task)
     oversized = await draft_sizes.findings(goal, drafts, sizer, events) if drafts else []
     drafts = draft_sizes.with_sizes(goal, drafts) if sizer is not None else drafts
@@ -431,6 +435,7 @@ async def _collect(goal: dict, tasks: TaskClient, events: Events, sizer: Any, is
                 items=items,
                 summary=summary,
                 gaps=gaps,
+                gap_choices=gap_choices,
                 issues=issues,
                 stopped_at=stopped,
             )
@@ -507,12 +512,14 @@ async def gather(
     drafts = plans.latest_drafts(of("issue_drafted"))
     decided = plans.latest_items(of("issue_planned"))
     summary, gaps = plans.latest_summary(of("plan_summarized"))
+    choices = plans.latest_choices(of("plan_summarized"), gaps)
     if base:
         drafts, decided = plans.merge(list(base.get("drafts") or []), drafts, decided)
         again = {item["ref"] for item in decided}
         decided = [*(i for i in base.get("items") or [] if i["ref"] not in again), *decided]
         if not of("plan_summarized"):
             summary, gaps = str(base.get("summary") or ""), list(base.get("gaps") or [])
+            choices = dict(base.get("gap_choices") or {})
     items = plans.complete(decided, issues)
     # A draft that names a whole top-level directory would make every task touching it wait for this one: a
     # gap the planner's suggested fix can settle by naming the files.
@@ -527,7 +534,14 @@ async def gather(
         ]
     else:
         invalid = plans.validate(drafts, goal["repos"], items, issues)
-    return {"drafts": drafts, "items": items, "summary": summary, "gaps": gaps, "invalid": invalid}
+    return {
+        "drafts": drafts,
+        "items": items,
+        "summary": summary,
+        "gaps": gaps,
+        "gap_choices": choices,
+        "invalid": invalid,
+    }
 
 
 def emit_saved(events: Events, plan: dict, who: str) -> None:
@@ -573,6 +587,7 @@ def edit(
             items=decided,
             summary=str(before.get("summary") or ""),
             gaps=list(before.get("gaps") or []),
+            gap_choices=dict(before.get("gap_choices") or {}),
             issues=issues,
         )
     emit_saved(events, plan, who)

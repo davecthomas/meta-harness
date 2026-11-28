@@ -317,7 +317,13 @@ export function planIssueTool(onDecision: (decision: IssueDecision) => void): To
 export interface PlanSummary {
 	summary: string;
 	gaps: string[];
+	/** The answers offered for a gap that is a choice: the gap's text, and two to four short answers. */
+	choices: { gap: string; options: string[] }[];
 }
+
+/** How many answers a gap may offer, and how long one may be: they are buttons. */
+const MAX_OPTIONS = 4;
+const MAX_OPTION_CHARS = 60;
 
 const PlanSummarySchema = Type.Object({
 	summary: Type.String({
@@ -328,6 +334,21 @@ const PlanSummarySchema = Type.Object({
 		Type.Array(Type.String({ minLength: 1 }), {
 			description: "What the goal asks for that no task covers, any risk you see, and anything you assumed. One per entry.",
 		}),
+	),
+	choices: Type.Optional(
+		Type.Array(
+			Type.Object({
+				gap: Type.String({ minLength: 1, description: "The gap's text, exactly as in gaps." }),
+				options: Type.Array(Type.String({ minLength: 1 }), {
+					description:
+						"Two to four answers, each a few words an operator would press as a button. The first is what the plan does now.",
+				}),
+			}),
+			{
+				description:
+					"For a gap that is a choice between a few answers, those answers. Leave a gap out when no short list covers it.",
+			},
+		),
 	),
 });
 
@@ -342,7 +363,15 @@ export function planSummaryTool(onSummary: (summary: PlanSummary) => void): Tool
 		promptSnippet: "plan_summary: say how the plan reaches the goal, and its gaps, once the plan is complete",
 		parameters: PlanSummarySchema,
 		async execute(_toolCallId, params) {
-			const summary: PlanSummary = { summary: params.summary.trim(), gaps: [...new Set((params.gaps ?? []).map((g) => g.trim()).filter(Boolean))] };
+			const gaps = [...new Set((params.gaps ?? []).map((g) => g.trim()).filter(Boolean))];
+			// Only for a gap the summary has, with at least two answers that differ: one answer is no choice.
+			const choices = (params.choices ?? [])
+				.map((c) => ({
+					gap: c.gap.trim(),
+					options: [...new Set(c.options.map((o) => o.trim().slice(0, MAX_OPTION_CHARS)).filter(Boolean))].slice(0, MAX_OPTIONS),
+				}))
+				.filter((c) => gaps.includes(c.gap) && c.options.length >= 2);
+			const summary: PlanSummary = { summary: params.summary.trim(), gaps, choices };
 			onSummary(summary);
 			return { content: [{ type: "text", text: "Recorded the plan's summary." }], details: undefined };
 		},

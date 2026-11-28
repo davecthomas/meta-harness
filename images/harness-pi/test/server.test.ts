@@ -586,7 +586,17 @@ test("a planning profile decides on existing issues and summarizes its plan, wit
 		call("c", "plan_issue", { ref: "jira:VL-2", decision: "split", reason: "Two changes.", replaced_by: ["store", "api"] }),
 		call("d", "plan_issue", { ref: "jira:VL-3", decision: "leave_out", reason: "Done already." }),
 		call("e", "plan_issue", { ref: "jira:VL-4", decision: "keep", reason: "x", depends_on: ["jira:VL-4"] }),
-		call("f", "plan_summary", { summary: " Store first, then the API. ", gaps: ["No task covers export.", " ", "No task covers export."] }),
+		call("f", "plan_summary", {
+			summary: " Store first, then the API. ",
+			gaps: ["No task covers export.", " ", "No task covers export.", "Scoring is capped at $1 a day."],
+			choices: [
+				// Trimmed, deduplicated and cut to four: these become buttons.
+				{ gap: " Scoring is capped at $1 a day. ", options: ["$1 a day", " $5 a day ", "$5 a day", "No cap", "$10 a day", "$20 a day"] },
+				// One answer is no choice, and an answer to a gap the summary lacks is dropped.
+				{ gap: "No task covers export.", options: ["Leave it out"] },
+				{ gap: "Not one of the gaps.", options: ["Yes", "No"] },
+			],
+		}),
 	];
 	const gateway = await startGateway((n) => ({ body: steps[n - 1] ?? DONE_TURN }));
 	const server = await startServer(gateway.url);
@@ -612,7 +622,11 @@ test("a planning profile decides on existing issues and summarizes its plan, wit
 	assert.match(JSON.stringify(results[1]!.data), /names the drafts that replace jira:VL-2 in replaced_by/);
 	assert.match(JSON.stringify(results[4]!.data), /cannot depend on itself/);
 	assert.deepEqual(events.filter((e) => e.type === "plan_summarized").map((e) => e.data), [
-		{ summary: "Store first, then the API.", gaps: ["No task covers export."] },
+		{
+			summary: "Store first, then the API.",
+			gaps: ["No task covers export.", "Scoring is capped at $1 a day."],
+			choices: [{ gap: "Scoring is capped at $1 a day.", options: ["$1 a day", "$5 a day", "No cap", "$10 a day"] }],
+		},
 	]);
 	assert.deepEqual(readdirSync(server.workspace), []);
 	await server.stop();

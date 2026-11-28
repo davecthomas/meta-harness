@@ -267,14 +267,14 @@ test("what the decision holds besides its sentence shows over the buttons even w
 
 // The plan page with a fake service: the plan, the needs list, and every call it is sent.
 const QUESTIONS = ["No task covers the export.", "The login flow is unclear."];
-function serve(initialGaps: string[]) {
+function serve(initialGaps: string[], choices: Record<string, string[]> = {}) {
   let gaps = initialGaps;
   let need = "accept_fix";
   const posts: { url: string; body: unknown }[] = [];
   const plan = () => ({
     goal_id: "g-1", status: "planning", planning_task_id: null, approved_at: null, label: "x", planning_usd: "4.00",
     decision: READY, glance: null,
-    plan: { version: 3, drafts: [], gaps, invalid: [], source: "planned", task_id: null, note: null, created: {}, created_by: "x", created_at: "2025-01-01T00:00:00Z" },
+    plan: { version: 3, drafts: [], gaps, gap_choices: choices, invalid: [], source: "planned", task_id: null, note: null, created: {}, created_by: "x", created_at: "2025-01-01T00:00:00Z" },
   });
   const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
@@ -296,8 +296,8 @@ function serve(initialGaps: string[]) {
   return posts;
 }
 
-async function openPlan(gaps: string[]) {
-  const posts = serve(gaps);
+async function openPlan(gaps: string[], choices: Record<string, string[]> = {}) {
+  const posts = serve(gaps, choices);
   const { forgetNeeds, useGoalNeeds } = await import("../overview/needsYou");
   const { PlanBody } = await import("./PlanPage");
   forgetNeeds();
@@ -363,4 +363,28 @@ test("a canceled review of an earlier version says which, and claims no count it
   const says = screen.getByTestId("plan-review-says").textContent ?? "";
   expect(says).toContain("was canceled. It recorded 1 problem");
   expect(says).not.toContain("0 open");
+});
+
+test("a question the planner offered answers for is answered with one press: the first as planned, another plans again", async () => {
+  const cap = "Scoring is capped at $1 a day.";
+  const posts = await openPlan([cap, QUESTIONS[0]], { [cap]: ["$1 a day", "$5 a day", "No cap"] });
+
+  const [offered, plain] = screen.getAllByTestId("question-answers");
+  // Each answer is a button, the first marked as what the plan does now; and one more for what no button says.
+  expect(within(offered).getAllByRole("button").map((b) => b.textContent)).toEqual(["$1 a day, as planned", "$5 a day", "No cap", "Something else"]);
+  expect(screen.getByText("Any answer but the first plans again (up to $4).")).toBeTruthy();
+  // A question with no answers offered keeps its two buttons.
+  expect(within(plain).getAllByRole("button").map((b) => b.textContent)).toEqual(["Fine as planned", "Change it"]);
+
+  fireEvent.click(within(offered).getByRole("button", { name: "$5 a day" }));
+  await waitFor(() => expect(posts.map((p) => p.url)).toEqual(["/v1/goals/g-1/replan"]));
+  expect(posts[0].body).toEqual({ note: "About " + cap + ": $5 a day" });
+});
+
+test("the first answer settles the question as planned, with no planning run", async () => {
+  const cap = "Scoring is capped at $1 a day.";
+  const posts = await openPlan([cap], { [cap]: ["$1 a day", "$5 a day"] });
+  fireEvent.click(screen.getByRole("button", { name: "$1 a day, as planned" }));
+  await waitFor(() => expect(screen.queryByTestId("plan-questions")).toBeNull());
+  expect(posts).toEqual([{ url: "/v1/goals/g-1/plan/gaps/dismiss", body: { version: 3, gap: cap } }]);
 });

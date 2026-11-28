@@ -690,7 +690,17 @@ def test_the_plan_holds_a_decision_for_each_issue_the_new_tasks_the_summary_and_
                 {"ref": big, "decision": "split", "reason": "Two changes.", "replaced_by": ["store", "api"]},
             ),
             ("issue_planned", {"ref": dup, "decision": "leave_out", "reason": "Same as the first."}),
-            ("plan_summarized", {"summary": "Store, then the API.", "gaps": ["Nothing covers export."]}),
+            (
+                "plan_summarized",
+                {
+                    "summary": "Store, then the API.",
+                    "gaps": ["Nothing covers export."],
+                    "choices": [
+                        {"gap": "Nothing covers export.", "options": ["Leave it out", "Add a task", "Add a task"]},
+                        {"gap": "A gap the plan lacks.", "options": ["Yes", "No"]},
+                    ],
+                },
+            ),
         ],
     )
 
@@ -700,6 +710,8 @@ def test_the_plan_holds_a_decision_for_each_issue_the_new_tasks_the_summary_and_
         and plan["summary"] == "Store, then the API."
         and plan["gaps"] == ["Nothing covers export."]
     )
+    # The answers the planner offered for a gap are kept with it, once each, and only for a gap the plan has.
+    assert plan["gap_choices"] == {"Nothing covers export.": ["Leave it out", "Add a task"]}
     assert [(i["ref"], i["title"]) for i in plan["issues"]] == [(keep, "Keep me"), (big, "Too big"), (dup, "Duplicate")]
     # An issue the planner said nothing of is kept.
     assert [(i["ref"], i["decision"]) for i in plan["items"]] == [(keep, "keep"), (big, "split"), (dup, "leave_out")]
@@ -713,6 +725,7 @@ def test_the_plan_holds_a_decision_for_each_issue_the_new_tasks_the_summary_and_
     ).json()["plan"]
     assert edited["version"] == 2 and edited["summary"] == "Store, then the API."
     assert f"{big}: is split, so name the new tasks that replace it" in edited["invalid"]
+    assert edited["gap_choices"] == plan["gap_choices"], "an edit keeps the planner's answers with its gaps"
     assert client.post(f"/v1/goals/{goal['id']}/approve", headers=OPERATOR).status_code == 409
 
 

@@ -28,7 +28,7 @@ EXISTING_REF = re.compile(r"^(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$")
 CHECKS_HEADING = re.compile(r"^##\s+acceptance checks\s*$", re.IGNORECASE | re.MULTILINE)
 PLAN_COLUMNS = (
     "goal_id, version, drafts, invalid, source, task_id, note, created, created_by, created_at, items, summary, "
-    "gaps, issues, tracked, stopped_at, dismissed_gaps"
+    "gaps, issues, tracked, stopped_at, dismissed_gaps, gap_choices"
 )
 # What a plan decides for an issue the goal already had.
 KEEP, SPLIT, LEAVE_OUT = "keep", "split", "leave_out"
@@ -95,6 +95,27 @@ def latest_summary(events: list[dict[str, Any]]) -> tuple[str, list[str]]:
     last = max(events, key=lambda e: e["position"], default=None)
     payload = (last or {}).get("payload") or {}
     return str(payload.get("summary") or "").strip(), _names(payload.get("gaps"))
+
+
+# How many answers a gap may offer, and how long one may be: the plan's page draws each as a button.
+MAX_GAP_OPTIONS = 4
+MAX_OPTION_CHARS = 60
+
+
+def latest_choices(events: list[dict[str, Any]], gaps: list[str]) -> dict[str, list[str]]:
+    """The answers a planning run offered for its gaps, from its last plan_summarized event, by the gap's text:
+    only for a gap the plan has, with two to four answers that differ. The first is what the plan does now."""
+    last = max(events, key=lambda e: e["position"], default=None)
+    found: dict[str, list[str]] = {}
+    for choice in ((last or {}).get("payload") or {}).get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        gap = str(choice.get("gap") or "").strip()
+        options = list(dict.fromkeys(_names(choice.get("options"))))
+        options = [o[:MAX_OPTION_CHARS] for o in options][:MAX_GAP_OPTIONS]
+        if gap in gaps and len(options) >= 2:
+            found[gap] = options
+    return found
 
 
 def complete(items: list[dict[str, Any]], issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -388,6 +409,7 @@ def save(
     items: list[dict[str, Any]] | None = None,
     summary: str = "",
     gaps: list[str] | None = None,
+    gap_choices: dict[str, list[str]] | None = None,
     issues: list[dict[str, Any]] | None = None,
     stopped_at: str | None = None,
 ) -> dict:
@@ -399,7 +421,8 @@ def save(
         version = cur.fetchone()["v"] + 1
         cur.execute(
             "INSERT INTO planner.plan (goal_id, version, drafts, invalid, source, task_id, note, created_by, items, "
-            "summary, gaps, issues, stopped_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "summary, gaps, issues, stopped_at, gap_choices) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             f"RETURNING {PLAN_COLUMNS}",
             (
                 goal_id,
@@ -415,6 +438,8 @@ def save(
                 Jsonb(gaps or []),
                 Jsonb(issues or []),
                 stopped_at,
+                # Only for the gaps this version has: an answer to a question that is gone is no button.
+                Jsonb({gap: options for gap, options in (gap_choices or {}).items() if gap in (gaps or [])}),
             ),
         )
         return _plan(cur.fetchone())

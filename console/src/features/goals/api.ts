@@ -155,6 +155,8 @@ export interface GoalPlan {
     // How the plan reaches the goal, and what it does not cover.
     summary?: string;
     gaps?: string[];
+    // The answers the planner offers for a gap that is a choice, by the gap's text: the first is what the plan does now.
+    gap_choices?: Record<string, string[]>;
     // Where an approval put the new tasks: the goal's tracker (true) or the meta-harness alone.
     tracked?: boolean | null;
     // Why the plan cannot be approved; empty when it can.
