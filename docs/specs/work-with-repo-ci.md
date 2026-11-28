@@ -4,9 +4,9 @@
 
 A repo's checks and its deploy are where its owners wrote down what counts as good and what counts as live.
 Muxxy treats them as a gate to wait at. It runs a test suite in its sandbox that the repo's CI runs again a
-minute later. It hands a fix run a failed check's name with none of its output. It calls a task done at the
-merge, while the repo's own deploy is still running. And an operator watching a task cannot see which check it
-waits on, how long that check takes, or whether the change is live.
+minute later. It hands a fix run a failed check's name with none of its output. It waits for a repo's deploy
+without saying the change is live. And nothing shows an operator how a repo's own checks are doing: whether
+its base passes, or which checks fail by chance.
 
 Each of those costs time or money on every task, and each has the same cause: Muxxy does not read what the
 repo already says.
@@ -24,19 +24,28 @@ A first principle joins the ten in `docs/technical-design.md`, the charter each 
 
 - **Less repeated work.** A check runs once for a commit, wherever it ran.
 - **Fewer fix rounds.** A fix run starts from the failed check's own output.
-- **A task ends when its change is live.** A failed deploy is a stop with an owner, as a failed check is.
-- **The operator sees the path.** Each task shows where its change stands between the sandbox and live, and
-  what it waits on.
+- **A task says when its change is live.** It already waits for the repo's deploy where that is a check on the
+  merge. The operator should read "Live" where the page now says "Merge commit's checks passed".
+- **The operator sees each repo's health.** Whether its base passes, how long its checks take, and which fail
+  by chance.
 - **The repo's findings are not lost.** A security alert or a check that keeps failing by chance becomes work
   or a count, never a log line nobody reads.
 
 ## What Muxxy reads from a repo today
 
-- Every check run on a pull request's head, required or not, and on the merge commit.
+- Every check run on a pull request's head, required or not, and on the merge commit. A merged task stays open
+  until the merge commit's checks pass (`wait_merge_checks`), and where the repo deploys from a workflow on its
+  base branch, the deploy's job is one of those checks. So such a task already ends when its change is live.
+  Nothing says so.
 - The base branch's check state before a merge.
+- How long each check took on the base's newest commit, shown beside a task's running checks as their usual
+  time (`GET /v1/pulls/{task_id}/checks`).
 - One rerun of a failed check, recorded as a `remedy_tried` event.
 
-It reads no job log, no check's duration, no branch rule, no deploy and no security alert.
+A task's page already draws its path from its events: its runs, its pull request's checks, its reviews, the
+merge and the merge commit's checks (`console/src/features/tasks/path.ts`).
+
+It reads no job log, no branch rule and no security alert, and it counts no rerun.
 
 ## What we want
 
@@ -58,19 +67,14 @@ It reads no job log, no check's duration, no branch rule, no deploy and no secur
 
 ### Done means live
 
-- **A task follows its merge to the deploy.** A repo may name the check that says a merge is live
-  (`deploy_check` in its registry entry, such as "deploy to Google Cloud"). The merge commit's checks already
-  hold the task (`wait_merge_checks`). With `deploy_check` set, the task's page says the change is live once
-  that check passes, and a failed deploy starts a fix run as a failed check after the merge does. A repo
-  with none set ends its tasks at the merge, as now.
+- **A task says when its change is live.** A repo may name the check that says a merge is live (`deploy_check`
+  in its registry entry, such as "deploy to Google Cloud"). The task already waits for it with the merge
+  commit's other checks. With it named, the last step of the task's path reads "Live" once that check passes,
+  and "The deploy failed" when it does not, in place of "Merge commit's checks passed". A repo with none named
+  reads as now.
 
 ### Show the path
 
-- **Each task shows its path.** One line of steps on a task's page: Run, Checks, Review, Merge, Main's checks,
-  Live. Each step is done, under way, waiting or failed, from the task's events. The step under way says what
-  it waits on, and for a check, how long that check usually takes.
-- **Each check has a usual time.** The run service records how long each check ran when it reads a pull
-  request's checks. The usual time is the middle of its last ten runs.
 - **A repo has a health line.** On a goal's page, for each of its repos: whether the base passes on the code
   host and in the sandbox, how long its checks usually take together, and which checks were rerun for failing
   by chance in the last week, with how often.
@@ -115,10 +119,9 @@ In order. Each is one pull request unless it says otherwise.
 3. **A fix run reads the failed check's log.** The largest cut in fix rounds expected.
 4. **A task's run tests what it changed.** After 3, since the run then leans on CI and CI's output must reach
    the fix.
-5. **Each check has a usual time**, recorded by the run service. Needed by 6.
-6. **Each task shows its path**, with `deploy_check` and Live. The console change every later part shows in.
-7. **A repo has a health line**, with the count of checks rerun for failing by chance.
-8. **This repo's CI**: the required check and admin rule, the pinned Temporal CLI, `pytest` across cores and
+5. **A task says when its change is live**, with `deploy_check`.
+6. **A repo has a health line**, with the count of checks rerun for failing by chance.
+7. **This repo's CI**: the required check and admin rule, the pinned Temporal CLI, `pytest` across cores and
    shared images. The rules and the pin go in first, then the speed.
-9. **Audits and scans in this repo's CI**, then **a security alert becomes an issue**, which reads them.
-10. **A type check and coverage of changed lines**, with the reviewer told which changed lines no test ran.
+8. **Audits and scans in this repo's CI**, then **a security alert becomes an issue**, which reads them.
+9. **A type check and coverage of changed lines**, with the reviewer told which changed lines no test ran.
