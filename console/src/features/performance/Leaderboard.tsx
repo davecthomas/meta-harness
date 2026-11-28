@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Anchor, Card, Group, Modal, Stack, Table, Text } from "@mantine/core";
+import symbol from "../../brand/muxxy-symbol.svg";
 import type { Board, BoardRow } from "./api";
 
 // Where Muxxy's dollar-hours per successful task stands among measured harness and model pairs: its rank as a
@@ -8,6 +9,17 @@ import type { Board, BoardRow } from "./api";
 
 const figure = (value: number) => (value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2));
 const nameOf = (row: BoardRow) => (row.muxxy ? "Muxxy" : `${row.harness} · ${row.model}`);
+
+// Muxxy's own row carries its mark, at the height of the row's text: it is found at a glance among the others.
+function Name({ row, size }: { row: BoardRow; size: number }) {
+  if (!row.muxxy) return <>{nameOf(row)}</>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, verticalAlign: "middle" }}>
+      <img src={symbol} alt="" height={size} data-testid="board-logo" style={{ display: "block" }} />
+      Muxxy
+    </span>
+  );
+}
 
 // The same caveat wherever the board is shown: the two sets of figures are not over the same tasks.
 function Candid({ board }: { board: Board }) {
@@ -46,7 +58,7 @@ export function BoardChart({ board }: { board: Board }) {
         {board.rows.map((row) => (
           <Group key={`${row.rank}`} gap="sm" wrap="nowrap" role="listitem" data-testid={row.muxxy ? "board-bar-muxxy" : "board-bar"}>
             <Text size="xs" w={210} ta="right" fw={row.muxxy ? 700 : 400} c={row.muxxy ? undefined : "dimmed"} lineClamp={1} style={{ flex: "none" }}>
-              {nameOf(row)}
+              <Name row={row} size={14} />
             </Text>
             <div style={{ position: "relative", flex: 1, height: 16, borderLeft: "1px solid var(--mantine-color-default-border)" }}>
               {ticks.slice(1).map((tick) => (
@@ -112,7 +124,7 @@ export function RankCard({ board }: { board: Board }) {
               {board.rows.map((row) => (
                 <Table.Tr key={row.rank} data-testid={row.muxxy ? "board-row-muxxy" : "board-row"} style={row.muxxy ? { background: "var(--mantine-color-violet-light)" } : undefined}>
                   <Table.Td fw={row.muxxy ? 700 : 400}>{row.rank}</Table.Td>
-                  <Table.Td fw={row.muxxy ? 700 : 400}>{nameOf(row)}</Table.Td>
+                  <Table.Td fw={row.muxxy ? 700 : 400}><Name row={row} size={20} /></Table.Td>
                   <Table.Td ta="right" fw={row.muxxy ? 700 : 400} style={{ fontVariantNumeric: "tabular-nums" }}>{figure(row.value)}</Table.Td>
                 </Table.Tr>
               ))}
