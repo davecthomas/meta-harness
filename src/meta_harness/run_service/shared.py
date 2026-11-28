@@ -342,6 +342,9 @@ class ChecksRequest:
 class FailedCheck:
     name: str
     summary: str
+    # The end of the failed job's own log, up to where it failed, when the code host has one: what a fix run
+    # reads in place of the summary (docs/specs/work-with-repo-ci.md).
+    log: str = ""
 
 
 @dataclass

@@ -32,6 +32,8 @@ pull request says `Closes owner/name#number`.
 import asyncio
 import os
 import re
+
+import httpx
 import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -40,7 +42,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from meta_harness import acting, local_repos, outbound
+from meta_harness import acting, local_repos, outbound, retrying
 from meta_harness.github_app import GitHubAppError, GitHubApps, git_auth_env
 from meta_harness.run_service.provenance import Provenance, commit_message, stamp
 
@@ -536,6 +538,59 @@ async def check_runs(repo: str, sha: str) -> list[CheckRun]:
 def _actions_run(url: str) -> int | None:
     found = ACTIONS_RUN.search(url)
     return int(found[1]) if found else None
+
+
+# How much of a failed job's log a fix run is given, and how many of a commit's failed checks get theirs.
+JOB_LOG_CHARS = 4000
+JOB_LOGS_MOST = 5
+# Each line of a job's log starts with when it was written, which a fix has no use for.
+LOG_STAMP = re.compile(r"^\ufeff?\d{4}-\d{2}-\d{2}T[\d:.]+Z ", re.MULTILINE)
+LOG_ERROR = "##[error]"
+
+
+def log_tail(text: str, most: int = JOB_LOG_CHARS) -> str:
+    """The part of a job's log that says why it failed: the text up to the end of its last error line, cut to
+    `most` characters, without each line's timestamp. A log with no error line gives its end."""
+    plain = LOG_STAMP.sub("", text or "").strip()
+    at = plain.rfind(LOG_ERROR)
+    if at >= 0:
+        end = plain.find("\n", at)
+        plain = plain[: end if end >= 0 else len(plain)]
+    return plain if len(plain) <= most else "[earlier output cut]\n" + plain[-most:]
+
+
+async def failed_job_log(repo: str, run_id: int, check: str, transport: httpx.AsyncBaseTransport | None = None) -> str:
+    """The log of the failed job behind a check, cut to what says why it failed (log_tail). "" when the
+    workflow run has no failed job of that name, or its log is gone."""
+    jobs = await _github(
+        repo, READ_ACTIONS, "GET", f"/repos/{repo}/actions/runs/{run_id}/jobs", params={"per_page": 100}
+    )
+    job = next(
+        (j for j in (jobs or {}).get("jobs", []) if j.get("name") == check and j.get("conclusion") == "failure"), None
+    )
+    if job is None:
+        return ""
+    token = await _token(repo, READ_ACTIONS)
+    # The log is plain text behind a redirect to where it is stored, which takes no token.
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, connect=10.0),
+        transport=retrying.async_transport(transport),
+        follow_redirects=True,
+        headers={"Authorization": f"token {token}", "X-GitHub-Api-Version": "2022-11-28"},
+    ) as http:
+        try:
+            response = await http.get(f"https://api.github.com/repos/{repo}/actions/jobs/{job['id']}/logs")
+        except httpx.HTTPError as err:
+            raise CodeHostError(f"the log of {check} could not be read: {err}") from err
+    if response.status_code >= 400:
+        if response.status_code in (404, 410):
+            return ""
+        raise CodeHostError(
+            f"the log of {check} could not be read: GitHub answered {response.status_code}",
+            retryable=response.status_code >= 500,
+            status=response.status_code,
+        )
+    return log_tail(response.text)
 
 
 async def run_attempt(repo: str, run_id: int) -> int:
