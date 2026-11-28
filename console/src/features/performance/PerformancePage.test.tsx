@@ -220,7 +220,7 @@ test("the key numbers are large, each a median and an average, for the days in v
   show(COSTS, "/performance?range=7", NUMBERS, all);
 
   const key = await screen.findByTestId("dollar-hours");
-  expect(key.textContent).toContain("Dollar-hours per completed task");
+  expect(key.textContent).toContain("Dollar-hours per successful task");
   expect(key.textContent).toContain("1.50median");
   expect(key.textContent).toContain("2.35average");
   expect(key.textContent).toContain("9 merged tasks");
