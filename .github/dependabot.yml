@@ -1,21 +1,31 @@
-# Updates as pull requests, once a week, grouped so a week is one pull request for each kind: the Python lock
-# file, the console's and the harness server's packages, and the actions the workflows pin by commit.
+# Updates as pull requests, once a week: one for each of the Python lock file, the console's and the harness
+# server's packages, and the actions the workflows pin by commit. Minor and patch updates only, grouped, so a
+# week's pull request is one that can merge. A major version changes what the code must do, so it is a change
+# someone asks for, and the nightly audit (security.yml) says when one is needed for a vulnerability.
 version: 2
 updates:
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       python:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: npm
     directories: ["/console", "/images/harness-pi"]
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
