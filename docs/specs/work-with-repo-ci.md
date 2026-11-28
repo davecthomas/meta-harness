@@ -40,7 +40,7 @@ A first principle joins the ten in `docs/technical-design.md`, the charter each 
 - The base branch's check state before a merge.
 - How long each check took on the base's newest commit, shown beside a task's running checks as their usual
   time (`GET /v1/pulls/{task_id}/checks`).
-- One rerun of a failed check, recorded as a `remedy_tried` event.
+- One rerun of a failed check, recorded as a `remedy_applied` event.
 
 A task's page already draws its path from its events: its runs, its pull request's checks, its reviews, the
 merge and the merge commit's checks (`console/src/features/tasks/path.ts`).
@@ -78,21 +78,32 @@ It reads no job log, no branch rule and no security alert, and it counts no reru
 A repo's state has no home today. Its settings are under Admin, and nothing says whether its base passes. A
 mockup of what follows: https://claude.ai/artifact/66KSCSEhznifi7A8abdhN9 (private to the owner until shared).
 
-**A Repos page, in the sidebar after Tasks.** Goals stay the unit of work, and this page starts none: it is
-read, with links out. One box for each repo that has an open goal or an entry in Configuration, Repositories,
+**A Repos page, in the sidebar after Tasks.** An operator reaches everything about a repo from it, since one
+who opens Repos expects that. It has two tabs:
+
+- **Health**, which it opens on: what follows.
+- **Settings**: the repositories' settings, the page that is Admin, Configuration, Repositories today, moved
+  here whole with its review, save and history. The old address opens this tab. Someone who is not an admin
+  reads the settings and cannot change them, as now.
+
+**Add repository** is in the page's heading on both tabs, and opens the Settings tab's dialog. Each repo's
+box has **Edit settings**, which opens the Settings tab at that repo.
+
+Goals stay the unit of work, and the Health tab starts none. One box for each repo that has an open goal or an entry in Configuration, Repositories,
 a failing base first:
 
 ```
-Repos                                              3 repos with an open goal or settings here
+Repos                                                                      [+ Add repository]
+[ Health ]  Settings                               3 repos with an open goal or settings here
 
 +-----------------------------------------------------------------------------------------+
-| stagwell-machine/console-api   [! Base fails 3 checks]              [Open the fix task]  |
+| stagwell-machine/console-api   [! Base fails 3 checks]  Edit settings [Open the fix task] |
 |                                                                                         |
 | BASE                    CHECKS                 WORK HERE              LIVE              |
 | Passes on GitHub        Usually 8m 20s         1 goal                 No deploy check   |
 | Fails in the sandbox    integration tests:     2 tasks running,       named             |
-| npm test                rerun 4 of 22 this     1 fixing the base      Name one in       |
-| at 4c1e9d0, found by    week                   1 open pull request    settings          |
+| npm test                rerun 4 times this     1 open pull request    Name one          |
+| at 4c1e9d0, found by    week                                                             |
 | "Add CSV export"                                                                        |
 +-----------------------------------------------------------------------------------------+
 | davecthomas/meta-harness       [ok Base passes]                         Edit settings   |
@@ -110,12 +121,12 @@ Repos                                              3 repos with an open goal or 
   one: the failing checks, the commit, and the goal whose task found it. The box's button opens the fix task
   when one is open, and is Fix it when Muxxy asked the goal's operator.
 - **Checks.** How long the repo's checks usually take together, and each check rerun for failing by chance in
-  the last seven days, with how many of its runs.
+  the last seven days, with how many times.
 - **Work here.** Its open goals, running tasks and open pull requests, as counts that link to them.
 - **Live.** For a repo with a deploy check named: the last change that went live and when. For one with none: a
   link to name one.
-- **Settings.** Its standing checks and deploy check, read only, with a link to Configuration, Repositories,
-  which edits and versions them.
+- **Settings.** Its standing checks and deploy check, shown in the box. Edit settings opens the Settings tab
+  at that repo, where an admin reviews a change and saves it as a version.
 - A repo no goal is working in says so, and that a task's next start checks its base.
 - The sidebar's entry counts the repos whose base fails.
 
@@ -127,11 +138,11 @@ mark that differs in shape, and a link to the Repos page:
 - A task's page: the last step of its path reads "Live" for a repo with a deploy check named.
 
 **What this page is not.** It shows no code and lists no pull requests: the code host does both, and every row
-links there. A repo has no page of its own, no history and no action but the fix for its base.
+links there. A repo has no page of its own and no action but its settings and the fix for its base.
 
-**Served by** `GET /v1/repos/health`, from what the run service and the planner already record: the kept base
-checks, `base_check_ran`, `remedy_tried`, `merge_checks` and the goals' links. Reading the page asks the code
-host nothing.
+**Served by** `GET /v1/repos/health`, from what the run service and the planner already record:
+`base_check_ran`, the fix task for a failing base, `remedy_applied`, `merge_checks` and the goals' tasks.
+Reading the page asks the code host only for the checks' usual times, which Muxxy keeps ten minutes.
 
 ### Findings become work
 
@@ -174,8 +185,9 @@ In order. Each is one pull request unless it says otherwise.
 4. **A task's run tests what it changed.** After 3, since the run then leans on CI and CI's output must reach
    the fix.
 5. **A task says when its change is live**, with `deploy_check`.
-6. **Repos in the console**: `GET /v1/repos/health`, the Repos page and the health marker. The
-   endpoint and the page go in first, then the marker on New goal and a goal's page.
+6. **Repos in the console**: `GET /v1/repos/health`, the Repos page with its Health and
+   Settings tabs, and the health marker. The endpoint and the page go in first, then the marker on New goal
+   and a goal's page.
 7. **This repo's CI**: the required check and admin rule, the pinned Temporal CLI, `pytest` across cores and
    shared images. The rules and the pin go in first, then the speed.
 8. **Audits and scans in this repo's CI**, then **a security alert becomes an issue**, which reads them.
