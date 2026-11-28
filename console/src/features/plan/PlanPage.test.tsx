@@ -311,30 +311,33 @@ async function openPlan(gaps: string[]) {
   return posts;
 }
 
-test("each open question has both buttons, and the dismissed one is gone with the others kept", async () => {
+test("each open question is settled with one press, with no typing, and the others are kept", async () => {
   const posts = await openPlan(QUESTIONS);
   await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("accept_fix"));
-  expect(screen.getAllByRole("button", { name: "Send to the planner (up to $4)" })).toHaveLength(2);
-  expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(2);
-  fireEvent.click(screen.getAllByRole("button", { name: "Not a problem" })[0]);
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(1));
+  // The answer most often is yes: one button says so, and no answer field waits to be typed in.
+  expect(screen.getAllByRole("button", { name: "Fine as planned" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Change it" })).toHaveLength(2);
+  expect(screen.queryByRole("textbox")).toBeNull();
+  fireEvent.click(screen.getAllByRole("button", { name: "Fine as planned" })[0]);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Fine as planned" })).toHaveLength(1));
   expect(posts[0]).toEqual({ url: "/v1/goals/g-1/plan/gaps/dismiss", body: { version: 3, gap: QUESTIONS[0] } });
   expect(screen.getByTestId("plan-questions").textContent).not.toContain(QUESTIONS[0]);
   await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("approve_plan"));
 });
 
-test("the list goes once the last question is dismissed", async () => {
+test("the list goes once the last question is settled", async () => {
   await openPlan([QUESTIONS[0]]);
-  fireEvent.click(screen.getByRole("button", { name: "Not a problem" }));
+  fireEvent.click(screen.getByRole("button", { name: "Fine as planned" }));
   await waitFor(() => expect(screen.queryByTestId("plan-questions")).toBeNull());
 });
 
-test("Send needs an answer, posts the note for the planner, and reads the needs again", async () => {
+test("Change it opens the answer field, and Send posts the note for the planner and reads the needs again", async () => {
   const posts = await openPlan([QUESTIONS[0]]);
   await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("accept_fix"));
+  fireEvent.click(screen.getByRole("button", { name: "Change it" }));
   const send = screen.getByRole("button", { name: "Send to the planner (up to $4)" });
   expect((send as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.change(screen.getByRole("textbox", { name: "Answer: " + QUESTIONS[0] }), { target: { value: "Yes, add it." } });
+  fireEvent.change(screen.getByRole("textbox", { name: "What to change: " + QUESTIONS[0] }), { target: { value: "Yes, add it." } });
   expect((send as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(send);
   await waitFor(() => expect(posts.map((p) => p.url)).toEqual(["/v1/goals/g-1/replan"]));
@@ -342,13 +345,16 @@ test("Send needs an answer, posts the note for the planner, and reads the needs 
   await waitFor(() => expect(screen.getByTestId("needs").textContent).toBe("approve_plan"));
 });
 
-test("an answer typed on one question stays when another is dismissed", async () => {
+test("Cancel puts the two buttons back, and an answer typed on one question stays when another is settled", async () => {
   await openPlan(QUESTIONS);
-  const second = screen.getByRole("textbox", { name: "Answer: " + QUESTIONS[1] });
-  fireEvent.change(second, { target: { value: "Email links only." } });
-  fireEvent.click(screen.getAllByRole("button", { name: "Not a problem" })[0]);
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Not a problem" })).toHaveLength(1));
-  expect((screen.getByRole("textbox", { name: "Answer: " + QUESTIONS[1] }) as HTMLInputElement).value).toBe("Email links only.");
+  fireEvent.click(screen.getAllByRole("button", { name: "Change it" })[1]);
+  fireEvent.change(screen.getByRole("textbox", { name: "What to change: " + QUESTIONS[1] }), { target: { value: "Email links only." } });
+  fireEvent.click(screen.getByRole("button", { name: "Fine as planned" }));
+  await waitFor(() => expect(screen.queryByText(QUESTIONS[0])).toBeNull());
+  expect((screen.getByRole("textbox", { name: "What to change: " + QUESTIONS[1] }) as HTMLInputElement).value).toBe("Email links only.");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.getByRole("button", { name: "Fine as planned" })).toBeTruthy();
 });
 
 test("a canceled review of an earlier version says which, and claims no count its cards contradict", () => {

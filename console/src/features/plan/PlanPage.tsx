@@ -333,7 +333,7 @@ export function ReviewPart({ plan, goal, onChanged, openInDecision = false }: { 
 }
 
 // What only the operator can settle, a few at most in view.
-// With onSend and onDismiss, each item has an answer field, "Send to the planner" and "Not a problem".
+// With onSend and onDismiss, each item has "Fine as planned" and "Change it", which opens an answer field.
 export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningUsd }: { gaps: string[]; busy?: boolean; onSend?: (gap: string, answer: string) => void; onDismiss?: (gap: string) => void; planningUsd?: string | null }) {
   const [all, setAll] = useState(false);
   if (!gaps.length) return null;
@@ -356,16 +356,28 @@ export function OpenQuestions({ gaps, busy = false, onSend, onDismiss, planningU
   );
 }
 
+// What an operator does about one open question. The planner has usually decided something and said so, so the
+// answer most often is yes: one press, "Fine as planned", settles it. Typing is asked of nobody: "Change it"
+// opens the answer field for an operator who wants something else, and sending it plans again.
 function QuestionActions({ gap, busy, onSend, onDismiss, planningUsd }: { gap: string; busy: boolean; onSend: (gap: string, answer: string) => void; onDismiss: (gap: string) => void; planningUsd?: string | null }) {
+  const [changing, setChanging] = useState(false);
   const [answer, setAnswer] = useState("");
   const text = answer.trim();
+  if (!changing) {
+    return (
+      <Group gap="xs" mt={4} wrap="wrap">
+        <Button size="xs" color="teal" variant="light" disabled={busy} onClick={() => onDismiss(gap)}>Fine as planned</Button>
+        <Button size="xs" variant="default" disabled={busy} onClick={() => setChanging(true)}>Change it</Button>
+      </Group>
+    );
+  }
   return (
     <Group gap="xs" mt={4} wrap="wrap" align="flex-end">
-      <TextInput size="xs" style={{ flex: "1 1 220px" }} aria-label={`Answer: ${gap}`} placeholder="Your answer" value={answer} onChange={(event) => setAnswer(event.currentTarget.value)} />
+      <TextInput size="xs" style={{ flex: "1 1 220px" }} aria-label={`What to change: ${gap}`} placeholder="What you want in its place" autoFocus value={answer} onChange={(event) => setAnswer(event.currentTarget.value)} />
       <Button size="xs" variant="default" disabled={busy || !text} onClick={() => onSend(gap, text)}>
         {`Send to the planner${planningUsd ? ` (up to ${dollars(planningUsd)})` : ""}`}
       </Button>
-      <Button size="xs" variant="default" disabled={busy} onClick={() => onDismiss(gap)}>Not a problem</Button>
+      <Button size="xs" variant="subtle" color="gray" disabled={busy} onClick={() => { setChanging(false); setAnswer(""); }}>Cancel</Button>
     </Group>
   );
 }
@@ -471,7 +483,7 @@ export function PlanBody({ goal, onApproved, onChanged, onShown }: { goal: Goal;
       shown(await api.dismissPlanGap(goalId, version, gap));
       void reloadNeeds();
     } catch (err) {
-      setError(`${err instanceof Error ? err.message : String(err)}. Press Not a problem again to retry.`);
+      setError(`${err instanceof Error ? err.message : String(err)}. Press Fine as planned again to retry.`);
     } finally {
       setBusy(false);
     }
