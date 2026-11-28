@@ -7,6 +7,9 @@ the untouched base once for each commit of it, and the result is kept (`run_serv
 
     known_base_checks   what is kept for the base's newest commit: read before a task's first run, so the
                         run's prompt lists what already fails
+                        When nothing is kept and the code host's own checks all passed that commit, the
+                        standing checks are kept as passing and the sandbox runs nothing
+                        (docs/specs/work-with-repo-ci.md)
     run_base_checks     runs the checks that have no result yet, in a sandbox of their own, beside the task's
                         first run; the task's reviews wait for it
 
@@ -32,6 +35,8 @@ CLAIM_MINUTES = 60
 # How much of a check's output is kept and shown: its end, where a test run says what failed.
 OUTPUT_CHARS = 2000
 PASSED, FAILED, RUNNING = "passed", "failed", "running"
+# What is kept as a check's output when it was not run here: the repo's own checks passed the commit.
+HOST_SAID = "not run in the sandbox: the repository's own checks passed this commit"
 
 
 @dataclass
@@ -187,7 +192,54 @@ async def known_base_checks(request: BaseChecksRequest) -> BaseChecksResult:
         raise ApplicationError(str(err), type="CodeHostError", non_retryable=not err.retryable) from err
     if not commit:
         return BaseChecksResult()
-    return await asyncio.to_thread(kept, request.repo, commit, commands)
+    known = await asyncio.to_thread(kept, request.repo, commit, commands)
+    if known.missing and await host_passed(request.repo, commit):
+        # The repo's own checks passed this commit: its word is taken, and the sandbox runs nothing.
+        await asyncio.to_thread(_keep_as_passed, request, commit, commands)
+        known = await asyncio.to_thread(kept, request.repo, commit, commands)
+    return known
+
+
+# A check run's conclusions that say nothing failed.
+HOST_PASSING = ("success", "neutral", "skipped")
+
+
+async def host_passed(repo: str, commit: str) -> bool:
+    """Whether the code host's own checks all passed on that commit: at least one ran, none is still running
+    or queued, and none failed. Its word is taken for a passing base only: a failing one is run in the
+    sandbox, which can differ and whose output the fix task needs. A host that cannot be asked says nothing."""
+    if code_host.is_local(repo):
+        return False
+    try:
+        runs = await code_host.check_runs(repo, commit)
+        if not runs or await code_host.pending_suites(repo, commit):
+            return False
+    except code_host.CodeHostError as err:
+        activity.logger.warning("base checks: %s's checks at %s could not be read: %s", repo, commit[:12], err)
+        return False
+    return all(run.status == "completed" and run.conclusion in HOST_PASSING for run in runs)
+
+
+def _keep_as_passed(request: BaseChecksRequest, commit: str, commands: list[str]) -> None:
+    """Keeps each standing check with no result as passing, on the code host's word, and says so."""
+    for command in claim(request.repo, commit, commands, request.task_id):
+        record(request.repo, commit, command, 0, HOST_SAID)
+        events.emit(
+            "base_check_ran",
+            {
+                "repo": request.repo,
+                "commit": commit,
+                "command": command,
+                "passed": True,
+                "exit_code": 0,
+                "output": HOST_SAID,
+                "source": "code_host",
+                **({"goal_id": request.goal_id} if request.goal_id else {}),
+            },
+            event_id=events.stable_id("base-check", request.repo.lower(), commit, command),
+            **({"task_id": request.task_id} if request.task_id else {}),
+            **({"tags": {"goal_id": request.goal_id}} if request.goal_id else {}),
+        )
 
 
 @activity.defn
