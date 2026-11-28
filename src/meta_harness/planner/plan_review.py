@@ -24,6 +24,7 @@ findings, until a review of a later version starts, and its findings do not bloc
 """
 
 import asyncio
+from datetime import UTC, datetime
 import logging
 import re
 from typing import Any
@@ -292,15 +293,39 @@ def _set(goal_id: str, version: int, **fields: Any) -> None:
         )
 
 
-def marked(goal_id: str, plan: dict | None) -> dict | None:
-    """The plan, with `reviewing` set while its adversarial review is running on this version. Nothing about a
-    plan is asked of the operator while a reviewer reads it (actions.actionable): the review may change it."""
+# How long a saved plan version waits for the review it is due before it reads as ready all the same: a review
+# that cannot start (no reviewer, no planning money left, a task that will not create) holds no plan for long.
+DUE_SECONDS = 180
+
+
+def due(goal: dict, plan: dict | None, now: datetime | None = None) -> bool:
+    """Whether the plan's newest version is about to be reviewed: its goal has reviews on, the version is
+    settled and has no review yet, this run of reviews has rounds left, and it was saved less than DUE_SECONDS
+    ago. A review starts at the sweep after a version is saved, so for that moment the plan read as ready,
+    asked its open question and offered Approve, and then took all of it back when the review began."""
+    if not plan or not goal.get("adversarial_review") or not _settled(goal, plan):
+        return False
+    found = _since_operator(goal["id"], rows(goal["id"]))
+    if any(r["version"] == plan["version"] for r in found) or len(found) >= max_rounds():
+        return False
+    try:
+        saved = datetime.fromisoformat(str(plan.get("created_at") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return ((now or datetime.now(UTC)) - saved).total_seconds() < DUE_SECONDS
+
+
+def marked(goal_id: str, plan: dict | None, goal: dict | None = None) -> dict | None:
+    """The plan, with `reviewing` set while its adversarial review is running on this version, or is about to
+    (`review_due`, which needs the goal). Nothing about a plan is asked of the operator while a reviewer reads
+    it or is about to (actions.actionable): the review may change it."""
     if plan is None:
         return None
     found = rows(goal_id)
     latest = found[-1] if found else None
     running = bool(latest and latest["state"] == "running" and latest["version"] == plan.get("version"))
-    return {**plan, "reviewing": running}
+    about_to = bool(goal) and not running and due(goal, plan)
+    return {**plan, "reviewing": running or about_to, "review_due": about_to}
 
 
 def current(goal_id: str) -> dict | None:

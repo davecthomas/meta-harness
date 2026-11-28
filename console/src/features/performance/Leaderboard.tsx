@@ -10,7 +10,7 @@ import type { Board, BoardRow } from "./api";
 const figure = (value: number) => (value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2));
 const nameOf = (row: BoardRow) => (row.muxxy ? "Muxxy" : `${row.harness} · ${row.model}`);
 
-// Muxxy's own row carries its mark, at the height of the row's text: it is found at a glance among the others.
+// The row that is Muxxy has its mark beside the name, at the height of the text, so a glance finds it.
 function Name({ row, size }: { row: BoardRow; size: number }) {
   if (!row.muxxy) return <>{nameOf(row)}</>;
   return (

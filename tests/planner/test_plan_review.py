@@ -450,3 +450,46 @@ def test_an_approval_refused_leaves_the_running_review_alone(world):  # noqa: F8
     assert invalid.status_code == 409, invalid.text
     assert tasks.tasks[task["id"]]["status"] != "canceled"
     assert plan_review.rows(goal["id"])[-1]["state"] == "running"
+
+
+def test_a_version_just_saved_asks_nothing_while_its_review_is_about_to_start(world):  # noqa: F811
+    """A review starts at the sweep after a version is saved. For that moment the plan read as ready: it showed
+    its open question and Approve, and took both back when the review began."""
+    from datetime import UTC, datetime, timedelta
+
+    from meta_harness.planner import needs
+
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="ask")
+    shown = _planned(client, events, tasks, goal, [draft("store")])
+    goal = _goal(client, goal)
+
+    # Saved, reviews on, and no review of this version yet: one is due.
+    with db.connect(autocommit=True) as conn:
+        plan = plans.latest(conn, goal["id"])
+    assert plan_review.due(goal, plan) is True
+    assert shown["decision"]["state"] == "improving" and shown["decision"]["buttons"] == []
+    assert "about to check this version" in shown["decision"]["says"]
+    assert shown["decision"]["link"] == {"action": "approve_plan", "label": "Approve now"}
+    assert [n["action"] for n in needs.by_id(goal["id"], tasks)[1]] == [], "nothing is asked of the operator"
+
+    # A review that cannot start holds no plan for long: past the wait, the plan reads as ready.
+    later = datetime.now(UTC) + timedelta(seconds=plan_review.DUE_SECONDS + 1)
+    assert plan_review.due(goal, plan, later) is False
+
+    # Once it runs, the running review is what the plan says, and once it has run this version, nothing is due.
+    task = _review(client, tasks, events, goal)
+    assert plan_review.due(goal, plan) is False
+    assert "is checking the plan" in _plan(client, goal)["decision"]["says"]
+    _ends(client, tasks, events, goal, task, {"verdict": "clean", "summary": "", "findings": []})
+    ready = _plan(client, goal)
+    assert ready["decision"]["state"] == "ready" and plan_review.due(_goal(client, goal), plan) is False
+
+
+def test_a_goal_with_reviews_off_is_ready_as_soon_as_its_plan_is_saved(world):  # noqa: F811
+    client, events, _, tasks = world
+    goal = _feature(client, autonomy="full")
+    shown = _planned(client, events, tasks, goal, [draft("store")])
+
+    assert _goal(client, goal)["adversarial_review"] is False
+    assert shown["decision"]["state"] == "ready"

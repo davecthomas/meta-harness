@@ -173,7 +173,16 @@ def register(
             "planning_usd": _planning_usd(),
             # The plan's state and the one thing it asks now, with its buttons (actions.plan_decision): the Plan
             # page draws this and decides nothing itself.
-            "decision": actions.plan_decision(goal, plan, glance, suggestion, _planning_usd(), review, _review_usd()),
+            "decision": actions.plan_decision(
+                goal,
+                # Marked when its review is about to start, so the decision asks nothing in that moment.
+                {**plan, "review_due": plan_review.due(goal, plan)} if plan else plan,
+                glance,
+                suggestion,
+                _planning_usd(),
+                review,
+                _review_usd(),
+            ),
             # The plan's figures for a glance, and what it changes about the version it is compared with.
             "glance": glance,
             "changes": changed,

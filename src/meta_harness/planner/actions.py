@@ -180,6 +180,14 @@ def plan_decision(
             "buttons": [],
             "link": {"action": "approve_plan", "label": "Approve now"},
         }
+    if plan.get("review_due"):
+        # The version was just saved and its review starts at the next sweep: nothing is asked in between.
+        return {
+            "state": "improving",
+            "says": "A second model is about to check this version of the plan for problems.",
+            "buttons": [],
+            "link": {"action": "approve_plan", "label": "Approve now"},
+        }
     if suggestion:
         gaps = len(suggestion.get("fixes") or [])
         return {

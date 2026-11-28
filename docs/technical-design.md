@@ -4336,7 +4336,12 @@ says how many problems are open, and its buttons are Fix it, which sends the
 planner back for them (`POST /v1/goals/{id}/plan/review/fix`), and Approve
 with them open. A finding can be dismissed
 (`.../plan/review/findings/{id}/dismiss`). While a review runs the plan asks
-nothing. Approving the plan (`POST /v1/goals/{id}/approve`) or saving an edit
+nothing. Nor does it in the moment before one starts: a review starts at the
+sweep after a version is saved, so a version that is due one
+(`plan_review.due`) reads "A second model is about to check this version",
+with no question and no Approve button, for up to three minutes. Before that,
+a version read as ready for that moment, asked its open question, and took it
+back when the review began. Approving the plan (`POST /v1/goals/{id}/approve`) or saving an edit
 (`PUT /v1/goals/{id}/plan`) cancels a running review, since nobody will read
 it. An approval that is refused (another is running, or the plan cannot
 be approved) leaves the review running. The review keeps the findings it recorded, and its state reads `canceled`.
