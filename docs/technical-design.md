@@ -121,6 +121,12 @@ judged against these rules.
     follow each other are one ask. More than five of anything is a count, with
     the list one click away. A plan, its changes and its approval are in one
     place, and other pages link there.
+11. **Work with each repo's own checks and deploy.** They say what the repo's
+    owners count as good and as live. Muxxy reads what they already say before
+    it runs anything itself, and repeats nothing they will run. It shows where
+    each change stands on that path, and counts a change done when the repo's
+    own process says it is live. What they find that no task covers becomes
+    work (`docs/specs/work-with-repo-ci.md`).
 
 ### What is tried, in order
 

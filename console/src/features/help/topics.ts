@@ -39,6 +39,8 @@ export const TOPICS: Topic[] = [
           "It shows every decision, with what it saw and the reason for it.",
           "You can always decide differently. The recommended action is one of several you can take.",
           "A spend limit you set is never passed. Reaching one stops the work and asks you.",
+          "What it shows you helps you decide, and costs as little reading as the decision allows.",
+          "It works with each repo's own checks and deploy. It reads what they already say before it runs anything itself, and repeats nothing they will run. A change is done when the repo's own process says it is live.",
         ],
       },
     ],
