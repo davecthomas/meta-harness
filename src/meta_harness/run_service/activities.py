@@ -101,7 +101,7 @@ from meta_harness.run_service.shared import (
 )
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-REPO_TEMPLATE = "repo-task-v2"
+REPO_TEMPLATE = "repo-task-v3"
 # A goal's planning task: the planner wrote what it asks; this wraps it with where the run is and what it may do.
 PLAN_TEMPLATE = "plan-v1"
 # A plan's adversarial review (planner/plan_review.py): a planning task whose pinned profile cannot draft issues.
