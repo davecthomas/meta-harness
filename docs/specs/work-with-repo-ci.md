@@ -174,21 +174,17 @@ This repo is the first one Muxxy works in, so its CI should give Muxxy what the 
 - **Muxxy files alerts and fixes none unasked.** A fix for a dependency can break a build. The operator decides
   which goal takes it.
 
-## Build plan
+## As built
 
-In order. Each is one pull request unless it says otherwise.
+Pull requests #725 to #737 built every part above, with these differences from the first draft:
 
-1. **This spec and the principle**: the design document, the charter and Help.
-2. **Base checks read the code host first.** Removes sandbox runs the last change added.
-3. **A fix run reads the failed check's log.** The largest cut in fix rounds expected.
-4. **A task's run tests what it changed.** After 3, since the run then leans on CI and CI's output must reach
-   the fix.
-5. **A task says when its change is live**, with `deploy_check`.
-6. **Repos in the console**: `GET /v1/repos/health`, the Repos page with its Health and
-   Settings tabs, and the health marker. The endpoint and the page go in first, then the marker on New goal
-   and a goal's page.
-7. **This repo's CI**: `pytest` across cores and the pinned Temporal CLI, then the required check and the
-   admin rule, which are settings of the repo. Sharing the sandbox images between a run's jobs is left out:
-   each job builds them in 24 seconds, less than passing them between jobs would take.
-8. **Audits and scans in this repo's CI**, then **a security alert becomes an issue**, which reads them.
-9. **A type check and coverage of changed lines**, with the reviewer told which changed lines no test ran.
+- **Sharing the sandbox images between a run's jobs** is left out. Each job builds them in 24 seconds, less
+  than passing them between jobs would take.
+- **The dependency audit runs on a pull request only when it changes what is installed**, and nightly. Run on
+  every pull request, a newly published advisory would have held work that had nothing to do with it.
+- **The type check fails a pull request only for an error it adds** (`deploy/type_ratchet.py`). The repo had
+  about 350 from before it was checked.
+- **A check's reruns are a count**, with no share of its runs: the run service records only the reruns.
+- **The VM's boot script** still installs the Temporal CLI with its install script. The workflows pin it by
+  hash.
+- **Dependency updates** are weekly pull requests of minor and patch versions (`.github/dependabot.yml`).

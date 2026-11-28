@@ -62,8 +62,9 @@ export function KeyNumbers({ from, to }: { from: string; to: string }) {
   if (!found) return null;
   return (
     <>
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mb="xs" data-testid="key-numbers">
-        <Big testid="dollar-hours" label="Dollar-hours per completed task" both={found.dollar_hours_per_completed_task} show={dh} of="merged tasks" help={DOLLAR_HOURS} />
+      {/* Seven numbers: four and three across on a wide page, so none sits alone on a row. */}
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} mb="xs" data-testid="key-numbers">
+        <Big testid="dollar-hours" label="Dollar-hours per successful task" both={found.dollar_hours_per_completed_task} show={dh} of="merged tasks" help={DOLLAR_HOURS} />
         {found.leaderboard && <RankCard board={found.leaderboard} />}
         <Big testid="tries-to-green" label="Tries to green" both={found.tries_to_green ?? NONE} show={tries} of="merged tasks" help={TRIES} />
         <Card withBorder padding="lg" data-testid="first-try-green">
