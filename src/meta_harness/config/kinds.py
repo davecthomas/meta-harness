@@ -454,6 +454,8 @@ def check_repos(document: dict[str, Any], others: dict[str, dict[str, Any]]) -> 
         checks = spec.get("default_checks", [])
         if not isinstance(checks, list) or not all(isinstance(c, str) and c for c in checks):
             reasons.append(f"{name}: default_checks must be a list of commands")
+        if not isinstance(spec.get("deploy_check", ""), str):
+            reasons.append(f"{name}: deploy_check must be the name of one check, or left out")
     return reasons
 
 

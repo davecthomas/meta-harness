@@ -1137,12 +1137,34 @@ async def wait_merge_checks(request: MergeChecksRequest) -> ChecksResult:
                 "state": result.state,
                 "failed": [f.name for f in result.failed],
                 "round": request.round_no,
+                **_live(request.repo, result),
             },
             task_id=request.task_id,
             event_id=events.stable_id(request.task_id, "merge_checks", request.merge_sha),
         )
     activity.logger.info("wait_merge_checks: %s at %s: %s", request.repo, request.merge_sha[:12], result.state)
     return result
+
+
+def _live(repo: str, result: ChecksResult) -> dict[str, Any]:
+    """What a merge commit's checks say about the repo's deploy, for a repo that names the check that says a
+    merge is live (its registry entry's deploy_check): the check's name, and whether it passed. Nothing for a
+    repo that names none, or while that check has not ended (docs/specs/work-with-repo-ci.md)."""
+    from meta_harness.planner import repos
+
+    try:
+        registered = repos.get(repo)
+    except Exception as err:  # noqa: BLE001 - with no registry to read, the checks are said as they were before
+        activity.logger.warning("the repo registry could not be read for %s's deploy check: %s", repo, err)
+        return {}
+    named = registered.deploy_check if registered else ""
+    if not named or result.state not in ("passed", "failed"):
+        return {}
+    failed = {check.name for check in result.failed}
+    if result.state == "failed" and named not in failed:
+        # Another check failed: whether the deploy ran is the checks' to say, one by one.
+        return {"deploy_check": named}
+    return {"deploy_check": named, "live": named not in failed}
 
 
 async def _merge_runs(request: MergeChecksRequest) -> list[code_host.CheckRun]:

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { MhEvent } from "../../api";
-import { STEP_EVENTS, candidateName, rows, span, steps, totals } from "./path";
+import { STEP_EVENTS, candidateName, mergeChecksTitle, rows, span, steps, totals } from "./path";
 
 let n = 0;
 let clock = Date.parse("2026-11-11T18:00:00Z");
@@ -238,4 +238,13 @@ test("a fix run asked to resolve a conflict is named for that, and any other fix
   ]);
 
   expect(path.map((s) => s.title)).toEqual(["Resolving the merge conflict", "Fix run"]);
+});
+
+
+test("a merge commit's checks say the change is live, or that the deploy failed, for a repo that names its deploy check", () => {
+  expect(mergeChecksTitle({ state: "passed", failed: [] })).toBe("Merge commit's checks passed");
+  expect(mergeChecksTitle({ state: "passed", failed: [], deploy_check: "deploy", live: true })).toBe("Live");
+  expect(mergeChecksTitle({ state: "failed", failed: ["deploy"], deploy_check: "deploy", live: false })).toBe("The deploy failed");
+  // Another check failed, and the deploy's own word is not known: said as the checks' state.
+  expect(mergeChecksTitle({ state: "failed", failed: ["tests"], deploy_check: "deploy" })).toBe("Merge commit's checks failed");
 });

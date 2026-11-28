@@ -1460,6 +1460,9 @@ def test_a_tasks_checks_are_listed_with_how_they_stand_and_how_long_they_usually
     merged = api.get("/v1/pulls/t-pr/checks", headers=OPERATOR).json()
     assert (merged["of"], merged["sha"], merged["state"], merged["failed"]) == ("merge", "m1", "failed", ["tests"])
     assert asked.count("HEAD") == 1
+    # What a setting that names one of a repo's checks is picked from: those on its default branch's newest commit.
+    listed = api.get("/v1/repos/o/r/checks", headers=OPERATOR).json()
+    assert listed == {"repo": "o/r", "checks": ["deploy", "sandbox", "tests"]}
 
     assert api.get("/v1/pulls/t-none/checks", headers=OPERATOR).status_code == 404
 

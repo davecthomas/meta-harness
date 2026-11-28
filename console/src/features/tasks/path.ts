@@ -54,6 +54,14 @@ export interface Row {
   back: string;
 }
 
+// What a merge commit's checks say, in a few words. A repo may name the check that says a merge is live (its
+// deploy): then the step says the change is live, or that the deploy failed, which is what the operator asks.
+export function mergeChecksTitle(p: Record<string, any>): string {
+  if (p.live === true) return "Live";
+  if (p.live === false) return "The deploy failed";
+  return `Merge commit's checks ${p.state}`;
+}
+
 // Every event type the path is drawn from. The task page reads all of them for the task, however old.
 export const STEP_EVENTS = [
   "task_created", "task_status_changed", "task_cancel_requested", "attempt_finished", "run_prompt", "run_finished",
@@ -376,7 +384,7 @@ export function steps(events: MhEvent[]): Step[] {
         break;
       case "merge_checks":
         add({
-          key: `p${e.position}`, kind: "merge_checks", column: 4, title: `Merge commit's checks ${p.state}`, detail: (p.failed ?? []).join(", "),
+          key: `p${e.position}`, kind: "merge_checks", column: 4, title: mergeChecksTitle(p), detail: p.live === true ? `${p.deploy_check} passed` : (p.failed ?? []).join(", "),
           tone: p.state === "passed" ? "ok" : p.state === "failed" ? "bad" : "plain", start: lastEnd(time), end: time,
         });
         break;

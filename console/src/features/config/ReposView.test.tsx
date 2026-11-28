@@ -57,3 +57,43 @@ test("a listed repository is removed here, one already listed is not offered aga
   fireEvent.click(screen.getByRole("button", { name: "Add repository" }));
   expect(await screen.findByText(/Every repository the App is installed on is listed already/)).toBeTruthy();
 });
+
+test("a repo's deploy check is picked from the checks on its default branch, and one that no longer runs is marked", async () => {
+  const staged: [string[], unknown][] = [];
+  vi.stubGlobal("fetch", (url: string) =>
+    Promise.resolve(
+      new Response(JSON.stringify(url === "/v1/repos/o/r/checks" ? { repo: "o/r", checks: ["deploy to Google Cloud", "tests"] } : { repos: [], install_urls: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  );
+  const repos = { "o/r": { default_checks: [], deploy_check: "old deploy" } };
+  render(
+    <MantineProvider theme={theme}>
+      <ReposView staging={{ document: { repos }, original: { repos }, stage: (path, value) => staged.push([path as string[], value]), reasons: () => [] }} />
+    </MantineProvider>,
+  );
+  const row = within(screen.getByTestId("repo-o/r"));
+  expect(await row.findByText("old deploy (did not run on the newest commit)")).toBeTruthy();
+  fireEvent.click(row.getByText("old deploy (did not run on the newest commit)"));
+  fireEvent.click(await screen.findByRole("option", { name: "deploy to Google Cloud", hidden: true }));
+  await vi.waitFor(() => expect(staged).toContainEqual([["repos", "o/r", "deploy_check"], "deploy to Google Cloud"]));
+});
+
+test("when a repo's checks cannot be read, the deploy check says why and takes a typed name", async () => {
+  vi.stubGlobal("fetch", (url: string) =>
+    Promise.resolve(
+      url === "/v1/repos/o/r/checks"
+        ? new Response(JSON.stringify({ detail: "could not read o/r's checks: GitHub answered 502. Type the check's name instead" }), { status: 502, headers: { "Content-Type": "application/json" } })
+        : new Response(JSON.stringify({ repos: [], install_urls: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ),
+  );
+  const repos = { "o/r": { default_checks: [] } };
+  render(
+    <MantineProvider theme={theme}>
+      <ReposView staging={{ document: { repos }, original: { repos }, stage: () => undefined, reasons: () => [] }} />
+    </MantineProvider>,
+  );
+  expect((await screen.findByTestId("deploy-check-unread-o/r")).textContent).toContain("Type the check's name instead");
+});

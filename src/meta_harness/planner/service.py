@@ -1119,6 +1119,19 @@ def create_app(
 
         return await asyncio.to_thread(write)
 
+    @app.get("/v1/repos/{owner}/{name}/checks")
+    async def repo_checks(owner: str, name: str, who: str = Depends(operator)) -> dict:
+        """The names of the checks on the newest commit of the repo's default branch: what a setting that names
+        one of them (a repo's deploy check) is picked from. 502, saying why, when the code host cannot be read."""
+        repo = f"{owner}/{name}"
+        try:
+            found = await code_host.check_details(repo, "HEAD")
+        except code_host.CodeHostError as err:
+            raise HTTPException(
+                status_code=502, detail=f"could not read {repo}'s checks: {err}. Type the check's name instead"
+            ) from err
+        return {"repo": repo, "checks": sorted({check["name"] for check in found}, key=str.lower)}
+
     @app.get("/v1/repos/available")
     async def available_repos(who: str = Depends(operator)) -> dict:
         """The repos the deployment's GitHub Apps are installed on and the registry does not list yet, and where

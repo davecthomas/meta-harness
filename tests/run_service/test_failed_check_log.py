@@ -103,3 +103,36 @@ def test_a_tasks_run_is_told_to_test_what_it_changed_and_leave_the_whole_suite_t
 
     assert "run the tests of the files you changed, as well as each acceptance check" in template
     assert "Do not run the repository's whole test suite unless an acceptance check names it" in template
+
+
+def test_a_merge_commits_checks_say_whether_the_repos_named_deploy_check_passed(monkeypatch):
+    from meta_harness.planner import repos
+    from meta_harness.run_service.shared import ChecksResult
+
+    named = repos.Repo("o/r", "github", [], "deploy to Google Cloud")
+    monkeypatch.setattr(repos, "get", lambda name: named if name == "o/r" else None)
+    failed = lambda *names: ChecksResult(state="failed", failed=[FailedCheck(n, "") for n in names])  # noqa: E731
+
+    assert activities._live("o/r", ChecksResult(state="passed")) == {
+        "deploy_check": "deploy to Google Cloud",
+        "live": True,
+    }
+    assert activities._live("o/r", failed("deploy to Google Cloud")) == {
+        "deploy_check": "deploy to Google Cloud",
+        "live": False,
+    }
+    assert activities._live("o/r", failed("tests")) == {"deploy_check": "deploy to Google Cloud"}, (
+        "not the deploy's word"
+    )
+    assert activities._live("o/r", ChecksResult(state="pending")) == {}
+    assert activities._live("o/unnamed", ChecksResult(state="passed")) == {}, "a repo that names none reads as before"
+
+
+def test_a_repos_deploy_check_is_one_checks_name():
+    from meta_harness.config import kinds
+
+    good = {"repos": {"o/r": {"default_checks": [], "deploy_check": "deploy to Google Cloud"}}}
+    assert kinds.check_repos(good, {}) == []
+    assert kinds.check_repos({"repos": {"o/r": {"deploy_check": ["a", "b"]}}}, {}) == [
+        "o/r: deploy_check must be the name of one check, or left out"
+    ]

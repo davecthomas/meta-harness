@@ -21,6 +21,8 @@ class Repo:
     name: str
     tracker: str
     default_checks: list[str]
+    # The check on a merge to the base branch that says the change is live, such as a deploy's job; "" for none.
+    deploy_check: str = ""
 
 
 def registry_path() -> Path:
@@ -46,7 +48,12 @@ def _file_registry() -> dict[str, Repo]:
 
 def _parse(loaded: dict) -> dict[str, Repo]:
     return {
-        name.lower(): Repo(name, spec.get("tracker", "github"), list(spec.get("default_checks", [])))
+        name.lower(): Repo(
+            name,
+            spec.get("tracker", "github"),
+            list(spec.get("default_checks", [])),
+            str(spec.get("deploy_check") or "").strip(),
+        )
         for name, spec in loaded["repos"].items()
     }
 

@@ -1103,6 +1103,16 @@ with the end of its job's own log, up to where it failed
 that for a GitHub Actions job says almost nothing. A log that cannot be read
 leaves the summary.
 
+A task says when its change is live. A merged task already waits for every
+check on its merge commit, and where a repo deploys from a workflow on its
+base branch, the deploy's job is one of them. A repo's registry entry may name
+that check (`deploy_check`, picked in Configuration, Repositories from the
+checks on the base's newest commit, `GET /v1/repos/{owner}/{name}/checks`).
+The `merge_checks` event then says `deploy_check` and whether it passed
+(`live`), and the last step of the task's path reads "Live" or "The deploy
+failed". A repo that names none reads "Merge commit's checks passed", as
+before.
+
 A failing base gets one fix task (`planner/base_fix.py`). The sweep of the
 goal whose task ran the failing check notes it (`planner.base_fix`, one row
 for a repo) and starts the task: an issue of that goal, kept in Muxxy, with
