@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from meta_harness import auth, budget_request, db, local_repos
 from meta_harness.scheduler import holds
 from meta_harness.supervisor import standing
-from meta_harness.tasks import performance, reviewers, reviews, spend, store
+from meta_harness.tasks import leaderboard, performance, reviewers, reviews, spend, store
 
 
 class Events(Protocol):
@@ -648,10 +648,15 @@ def create_app(
         ids = sorted({e["task_id"] for e in recorded if e.get("task_id")})
         with app.state.pool.connection() as conn:
             goals, types = store.goals_of(conn, ids)
+        numbers = performance.summary(recorded, goals, since, until, types)
+        mine = numbers["dollar_hours_per_completed_task"]
         return {
             "since": since.isoformat(),
             "until": until.isoformat(),
-            **performance.summary(recorded, goals, since, until, types),
+            **numbers,
+            # Where that figure stands among measured harness and model pairs (tasks/leaderboard.py). The
+            # average is the one their figures are: Σ(D × H) over Σ C.
+            "leaderboard": leaderboard.board(mine["average"], numbers["tasks"]),
         }
 
     @app.get("/v1/reviewers")
