@@ -12,25 +12,25 @@
     "brand": "node scripts/build-brand.mjs"
   },
   "dependencies": {
-    "@mantine/core": "9.7.3",
-    "@mantine/hooks": "9.7.3",
-    "@mantine/notifications": "9.7.3",
-    "@tabler/icons-react": "3.49.0",
-    "react": "19.2.9",
-    "react-dom": "19.2.9",
-    "react-router-dom": "7.18.5"
+    "@mantine/core": "9.8.2",
+    "@mantine/hooks": "9.8.2",
+    "@mantine/notifications": "9.8.2",
+    "@tabler/icons-react": "3.53.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router-dom": "7.18.7"
   },
   "devDependencies": {
     "@resvg/resvg-wasm": "2.6.2",
-    "@testing-library/dom": "10.4.0",
-    "@testing-library/react": "16.1.0",
-    "@types/react": "19.3.0",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.3.2",
     "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "4.3.4",
-    "jsdom": "25.0.1",
+    "@vitejs/plugin-react": "6.3.0",
+    "jsdom": "31.0.1",
     "svgo": "4.1.0",
-    "typescript": "5.6.3",
-    "vite": "6.4.6",
-    "vitest": "4.1.12"
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.2"
   }
 }
