@@ -173,19 +173,14 @@ the prompt:
 
 ## Where
 
-In order, each one pull request. The first two hold nothing back, so nothing can be stopped by a mistake in
-them.
+Two builds, from two files, so that a goal planned from one builds only its part:
 
-1. **The score.** Paths: src/meta_harness/planner/goal_safety.py, src/meta_harness/planner/migrations,
-   src/meta_harness/events/types.py, config/planner.json, src/meta_harness/config/kinds.py,
-   tests/planner/test_goal_safety.py
-2. **The badge and the reasons.** Paths: src/meta_harness/planner/plan_api.py,
-   console/src/features/goals/GoalSafety.tsx, console/src/features/plan, console/src/features/config
-3. **The thresholds, held and blocked plans, and an admin's approval.** Paths:
-   src/meta_harness/planner/goal_safety.py, src/meta_harness/planner/plan_api.py,
-   src/meta_harness/planner/actions.py, console/src/features/goals, console/src/features/plan
-4. **Right or wrong, and the counts on Performance.** Paths: src/meta_harness/planner/goal_safety.py,
-   src/meta_harness/tasks/performance.py, console/src/features/performance
+- **The score, the badge and the answers** hold nothing back, so a mistake in them stops no goal. Their build
+  spec is `docs/specs/goal-safety-score.md`, written to be handed to Muxxy as a goal.
+- **The thresholds' hold and block, and an admin's approval** change who may approve a plan. A person builds them
+  after the score is live, from "Held and blocked goals" above. Paths:
+  src/meta_harness/planner/goal_safety.py, src/meta_harness/planner/plan_api.py,
+  src/meta_harness/planner/actions.py, console/src/features/goals, console/src/features/plan
 
 ## Checks
 
@@ -194,9 +189,10 @@ them.
 - A planner test for each row of the table above, with a fake Gateway: the score kept, its reasons cut to
   three, and `goal_safety_scored` recorded with its cost.
 - A planner test: an answer outside the shape is no score, and the next sweep asks again.
-- A planner test for each state: below the ask threshold the plan approves; at it, Muxxy refuses an operator with
-  the reasons and an admin approves; at the block threshold it refuses everyone until an admin allows it once
-  with a reason; with a threshold set and no score, approving waits.
+- For the hold and block, built apart, a planner test for each state. Below the ask threshold the plan
+  approves. At it, Muxxy refuses an operator with the reasons, and an admin approves. At the block threshold it
+  refuses everyone until an admin allows it once with a reason. With a threshold set and no score, approving
+  waits.
 - A planner test: with scoring off, the planner scores nothing and holds nothing.
 - A console test: the badge for each state, the reasons on hover, and the reasons in the decision box above
   its buttons for a plan that is not Safe.
