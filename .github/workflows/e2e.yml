@@ -80,9 +80,17 @@ jobs:
         with:
           version: "0.12.5"
 
+      # The release's own file at a fixed version, checked against the hash its release publishes: no install
+      # script is run, and a file that is not the one named fails the job.
       - name: Install the Temporal CLI
+        env:
+          TEMPORAL_VERSION: "1.10.0"
+          TEMPORAL_SHA256: 521f461f3d108902763bb71e85cd0fd382dc9357b59604ae03da6ae734d16890
         run: |
-          curl -sSf https://temporal.download/cli.sh | sh -s -- --version v1.10.0
+          curl -sSfL --retry 3 -o /tmp/temporal.tar.gz "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_VERSION}/temporal_cli_${TEMPORAL_VERSION}_linux_amd64.tar.gz"
+          echo "${TEMPORAL_SHA256}  /tmp/temporal.tar.gz" | sha256sum --check
+          mkdir -p "$HOME/.temporalio/bin"
+          tar -xzf /tmp/temporal.tar.gz -C "$HOME/.temporalio/bin" temporal
           echo "$HOME/.temporalio/bin" >> "$GITHUB_PATH"
 
       - name: make e2e
@@ -135,9 +143,17 @@ jobs:
         with:
           version: "0.12.5"
 
+      # The release's own file at a fixed version, checked against the hash its release publishes: no install
+      # script is run, and a file that is not the one named fails the job.
       - name: Install the Temporal CLI
+        env:
+          TEMPORAL_VERSION: "1.10.0"
+          TEMPORAL_SHA256: 521f461f3d108902763bb71e85cd0fd382dc9357b59604ae03da6ae734d16890
         run: |
-          curl -sSf https://temporal.download/cli.sh | sh -s -- --version v1.10.0
+          curl -sSfL --retry 3 -o /tmp/temporal.tar.gz "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_VERSION}/temporal_cli_${TEMPORAL_VERSION}_linux_amd64.tar.gz"
+          echo "${TEMPORAL_SHA256}  /tmp/temporal.tar.gz" | sha256sum --check
+          mkdir -p "$HOME/.temporalio/bin"
+          tar -xzf /tmp/temporal.tar.gz -C "$HOME/.temporalio/bin" temporal
           echo "$HOME/.temporalio/bin" >> "$GITHUB_PATH"
 
       - name: make image-checks

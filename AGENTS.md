@@ -10,6 +10,8 @@ and what is planned.
 - Install: `uv sync`.
 - Test: `uv run pytest -q`. Tests marked `db` need Postgres at
   `MH_DATABASE_URL` and skip without it. No test calls a model provider.
+  `uv run pytest -q -n auto` runs them across cores, as CI does: each worker
+  has a database of its own, so a test may read a whole table.
 - Lint and format: `uv run ruff check .` and `uv run ruff format --check src tests`.
   Run `uv run ruff format src tests` to fix formatting.
 - The harness image, `images/harness-pi`, has its own tests: `npm ci`, then

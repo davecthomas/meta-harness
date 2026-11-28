@@ -81,7 +81,9 @@ jobs:
       - run: uv run mh migrate
       - name: make test, with every database test required to run
         # The replay test's recording runs only when asked (MH_RECORD_HISTORIES); every other skip fails the job.
-        run: uv run pytest -q -rs | tee pytest.out && ! grep "SKIPPED" pytest.out | grep -v "records histories only when asked"
+        # Across the runner's cores, each worker on a database of its own (tests/conftest.py): the suite took
+        # four and a half minutes on one core, and that was the longest check on every pull request.
+        run: uv run pytest -q -rs -n auto | tee pytest.out && ! grep "SKIPPED" pytest.out | grep -v "records histories only when asked"
 
   console:
     name: console web app

@@ -1,0 +1,99 @@
+# What the repo's dependencies and code are known to be open to, kept out of every pull request's wait.
+#
+# The dependency audit runs on a pull request only when it changes what is installed (a lock file or a project
+# file), so a vulnerable package is refused where it comes in. Everything here also runs each night and on
+# demand, since an advisory is published against code that has not changed: a night's failure is the repo's to
+# fix, and it holds no unrelated pull request. CodeQL and the sandbox image's scan report to the repo's code
+# scanning alerts (docs/specs/work-with-repo-ci.md).
+
+name: security
+
+on:
+  pull_request:
+    paths:
+      - uv.lock
+      - pyproject.toml
+      - "**/package-lock.json"
+      - "**/package.json"
+      - .github/workflows/security.yml
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.12.5"
+      - name: Python packages with a known vulnerability
+        run: |
+          uv export --locked --no-hashes --no-emit-project --format requirements-txt -q > requirements.audit.txt
+          uvx pip-audit==2.10.1 -r requirements.audit.txt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: The console's packages with a high or critical vulnerability
+        working-directory: console
+        run: npm audit --audit-level=high
+      - name: The harness server's packages with a high or critical vulnerability
+        working-directory: images/harness-pi
+        run: npm audit --audit-level=high
+
+  codeql:
+    name: code scanning (${{ matrix.language }})
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          category: /language:${{ matrix.language }}
+
+  image:
+    name: sandbox image scan
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the per-run sandbox image
+        run: docker build --tag harness-pi:scan images/harness-pi
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: harness-pi:scan
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: sandbox-image

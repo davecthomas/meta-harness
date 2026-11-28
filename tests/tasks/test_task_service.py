@@ -953,6 +953,8 @@ def test_an_uncounted_drive_is_none_of_the_tasks_tries_and_tasks_are_listed_by_w
     from meta_harness.supervisor.rules import Decision
 
     with db.connect(autocommit=True) as conn:
+        # The list is every task someone has: what an earlier test in this database left held is not this test's.
+        conn.execute("DELETE FROM supervisor.standing")
         standing.save(conn, task["id"], Decision("operator", "failed", "the task failed", ask="Retry it."))
         standing.save(conn, other["id"], Decision("scheduler", "queued", "it waits for the scheduler"))
         paused = Decision("operator", "goal_not_active", "its goal is paused", ask="Resume the goal.")
