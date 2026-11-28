@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { Alert, Badge, Button, Center, Code, Group, List, Loader, Modal, Paper, Popover, Stack, Table, Tabs, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconArrowBackUp, IconCode, IconInfoCircle } from "@tabler/icons-react";
@@ -45,6 +45,8 @@ export function ConfigPage() {
 
   useEffect(reload, [reload]);
 
+  // The repositories' settings are on the Repos page, with everything else about a repo: the old address goes there.
+  if (kind === "repos") return <Navigate to="/repos?tab=settings" replace />;
   if (!kinds) return error ? <ErrorAlert error={error} /> : <Center h={240}><Loader /></Center>;
   return (
     <>
@@ -59,12 +61,12 @@ export function ConfigPage() {
       )}
       <Tabs value={kind} onChange={(value) => value && setParams({ kind: value })} keepMounted={false}>
         <Tabs.List mb="lg">
-          {kinds.map((k) => (
+          {kinds.filter((k) => k.kind !== "repos").map((k) => (
             // The tab names the kind alone, so the row fits one line; its version is in the panel under it.
             <Tabs.Tab key={k.kind} value={k.kind}>{k.title}</Tabs.Tab>
           ))}
         </Tabs.List>
-        {kinds.map((k) => (
+        {kinds.filter((k) => k.kind !== "repos").map((k) => (
           <Tabs.Panel key={k.kind} value={k.kind}>
             <KindPanel summary={k} onSaved={reload} maxSandboxes={maxSandboxes} />
           </Tabs.Panel>
@@ -74,7 +76,7 @@ export function ConfigPage() {
   );
 }
 
-function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary; onSaved: () => void; maxSandboxes: number | null }) {
+export function KindPanel({ summary, onSaved, maxSandboxes }: { summary: ConfigSummary; onSaved: () => void; maxSandboxes: number | null }) {
   const [current, setCurrent] = useState<ConfigVersion | null>(null);
   const [versions, setVersions] = useState<ConfigVersion[]>([]);
   // The document with the staged changes, or null while nothing is staged.

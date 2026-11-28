@@ -3,6 +3,7 @@ import { feature as overview } from "./overview";
 import { feature as goals } from "./goals";
 import { feature as plan } from "./plan";
 import { feature as tasks } from "./tasks";
+import { feature as repos } from "./repos";
 import { feature as performance } from "./performance";
 import { feature as config } from "./config";
 import { feature as admin } from "./admin";
@@ -11,4 +12,4 @@ import { feature as github } from "./github";
 import { feature as help } from "./help";
 import type { Feature } from "./types";
 
-export const FEATURES: Feature[] = [overview, goals, plan, tasks, performance, config, admin, settings, github, help];
+export const FEATURES: Feature[] = [overview, goals, plan, tasks, repos, performance, config, admin, settings, github, help];

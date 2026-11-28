@@ -46,5 +46,7 @@ export const adminApi = {
     call<ConsoleUser>(`/v1/admin/users/${encodeURIComponent(email)}`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deprovisionUser: (email: string) => call<ConsoleUser>(`/v1/admin/users/${encodeURIComponent(email)}`, { method: "DELETE" }),
   reviewers: (days: number) => call<{ since: string; until: string; reviewers: ReviewerRow[] }>("/v1/reviewers" + query({ days })),
+  // The names of the checks on the newest commit of a repo's default branch: what its deploy check is picked from.
+  repoChecks: (repo: string) => call<{ repo: string; checks: string[] }>(`/v1/repos/${repo}/checks`),
   reposAvailable: () => call<{ repos: { name: string; private: boolean }[]; install_urls: string[] }>("/v1/repos/available"),
 };

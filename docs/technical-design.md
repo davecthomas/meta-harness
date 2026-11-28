@@ -1103,6 +1103,29 @@ with the end of its job's own log, up to where it failed
 that for a GitHub Actions job says almost nothing. A log that cannot be read
 leaves the summary.
 
+A task says when its change is live. A merged task already waits for every
+check on its merge commit, and where a repo deploys from a workflow on its
+base branch, the deploy's job is one of them. A repo's registry entry may name
+that check (`deploy_check`, picked in Configuration, Repositories from the
+checks on the base's newest commit, `GET /v1/repos/{owner}/{name}/checks`).
+The `merge_checks` event then says `deploy_check` and whether it passed
+(`live`), and the last step of the task's path reads "Live" or "The deploy
+failed". A repo that names none reads "Merge commit's checks passed", as
+before.
+
+Repos have a page of their own in the console (`console/src/features/repos`,
+`planner/repo_health.py`). `GET /v1/repos/health` lists each repo with an open
+goal or a registry entry, a failing base first: how its base stands and where
+that was said, the fix for a failing one, how long its checks usually take,
+each check re-run for failing by chance in the last seven days, the goals and
+running tasks there, the last change its deploy check said was live, and its
+settings. It reads what is already recorded, and asks the code host only for
+the checks' usual times, kept ten minutes. The page's Settings tab is the
+repositories' configuration, moved from Configuration with its review, save
+and history; `/config?kind=repos` opens it. The sidebar's entry counts the
+repos whose base fails. One marker, "Base passes" or "Base fails N checks",
+reads the same health beside a goal's repos and under New goal's repo picker.
+
 A failing base gets one fix task (`planner/base_fix.py`). The sweep of the
 goal whose task ran the failing check notes it (`planner.base_fix`, one row
 for a repo) and starts the task: an issue of that goal, kept in Muxxy, with

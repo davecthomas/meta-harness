@@ -95,7 +95,7 @@ export function isChanged(before: unknown, after: unknown, path: Path): boolean 
 
 // The fields of a harness profile and of a repo that a refused save's reason can name, after "<name>: ".
 const PROFILE_FIELDS = ["tools", "max_turns", "max_minutes", "bash_allow", "resources.cpu", "resources.memory_gb", "image"];
-const REPO_FIELDS = ["tracker", "default_checks"];
+const REPO_FIELDS = ["tracker", "default_checks", "deploy_check"];
 
 // The field a reason names after its "<name>: " prefix: "<name>: resources.memory_gb must be ..." is about
 // resources.memory_gb, "<name>: unknown tools x" about tools.
@@ -244,7 +244,10 @@ export function shapeProblems(kind: ConfigKind, document: Record<string, any>): 
       optional(p.resources, isObject, `profiles.${name}.resources is an object`);
     });
   } else if (kind === "repos") {
-    objectsOf(document.repos, "repos", (name, r) => optional(r.default_checks, isStrings, `repos.${name}.default_checks is a list of commands`));
+    objectsOf(document.repos, "repos", (name, r) => {
+      optional(r.default_checks, isStrings, `repos.${name}.default_checks is a list of commands`);
+      optional(r.deploy_check, (v) => typeof v === "string", `repos.${name}.deploy_check is the name of one check`);
+    });
   } else if (kind === "task_policy") {
     optional(document.review, isObject, "review is an object");
     if (isObject(document.review)) optional(document.review.reviewers, isStrings, "review.reviewers is a list of candidates");

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Group, Modal, Paper, Select, Stack, Table, Text, Textarea } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api } from "../../api";
@@ -18,12 +18,45 @@ function lines(text: string): string[] {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
+// The check on a merge to the repo's default branch that says the change is live (its deploy): picked from the
+// checks that ran on that branch's newest commit. A saved one that no longer runs there is offered and marked.
+// When the checks cannot be read, the field says why and takes a typed name.
+function DeployCheck({ name, value, staging: s }: { name: string; value: string; staging: Staging }) {
+  const [checks, setChecks] = useState<string[] | null>(null);
+  const [unread, setUnread] = useState<string | null>(null);
+  useEffect(() => {
+    if (s.readOnly) return;
+    api.repoChecks(name).then((found) => setChecks(found.checks ?? []), (err) => setUnread(err instanceof Error ? err.message : String(err)));
+  }, [name, s.readOnly]);
+  const shared = {
+    label: `Deploy check of ${name}`,
+    empty: <Text size="sm" c="dimmed">None: a task ends at its merge commit's checks</Text>,
+    changed: changed(s, ["repos", name, "deploy_check"]),
+    reasons: s.reasons(`repo:${name}:deploy_check`),
+    readOnly: s.readOnly,
+  };
+  const stage = (v: string | null) => s.stage(["repos", name, "deploy_check"], v || undefined);
+  if (checks === null) {
+    return (
+      <Stack gap={2}>
+        <InlineField kind="text" value={value || null} placeholder="The check's name" {...shared} onCommit={stage} />
+        {unread && <Text size="xs" c="orange" data-testid={`deploy-check-unread-${name}`}>{unread}</Text>}
+      </Stack>
+    );
+  }
+  const gone = value !== "" && !checks.includes(value);
+  const data = [...(gone ? [{ value, label: `${value} (did not run on the newest commit)` }] : []), ...checks];
+  return <InlineField kind="select" value={value || null} data={data} clearable searchable placeholder="Pick a check" {...shared} onCommit={stage} />;
+}
+
 export function ReposView({ staging: s }: { staging: Staging }) {
   const repos: Record<string, any> = s.document.repos ?? {};
   const names = Object.keys(repos);
   const [available, setAvailable] = useState<Available | null>(null);
   const [unlisted, setUnlisted] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  // The Repos page's Add repository opens this dialog on arrival (`?add=1`).
+  const [params] = useSearchParams();
+  const [adding, setAdding] = useState(params.get("add") === "1");
   useEffect(() => {
     if (s.readOnly) return;
     api.reposAvailable().then(setAvailable, (err) => setUnlisted(err instanceof Error ? err.message : String(err)));
@@ -72,7 +105,7 @@ export function ReposView({ staging: s }: { staging: Staging }) {
             {installLine || <span />}
             {add}
           </Group>
-          <DataTable head={["Repository", "Default acceptance checks", ""]}>
+          <DataTable head={["Repository", "Default acceptance checks", "Deploy check", ""]}>
             {Object.entries(repos).map(([name, r]) => (
               <Table.Tr key={name} data-testid={`repo-${name}`}>
                 <Table.Td>
@@ -93,6 +126,9 @@ export function ReposView({ staging: s }: { staging: Staging }) {
                     readOnly={s.readOnly}
                     onCommit={(v) => s.stage(["repos", name, "default_checks"], v)}
                   />
+                </Table.Td>
+                <Table.Td>
+                  <DeployCheck name={name} value={r.deploy_check ?? ""} staging={s} />
                 </Table.Td>
                 <Table.Td>
                   {!s.readOnly && (
