@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { ErrorAlert } from "../../components/ui";
 import { usd } from "../../money";
 import type { Both, Performance } from "./api";
+import { BoardChart, RankCard } from "./Leaderboard";
 
 // The Performance page's key numbers, large: what a task, a pull request and a goal cost, and the dollar-hours a
 // successfully completed task takes, each as an average and a median, for the tasks whose last run finished in
@@ -63,6 +64,7 @@ export function KeyNumbers({ from, to }: { from: string; to: string }) {
     <>
       <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mb="xs" data-testid="key-numbers">
         <Big testid="dollar-hours" label="Dollar-hours per completed task" both={found.dollar_hours_per_completed_task} show={dh} of="merged tasks" help={DOLLAR_HOURS} />
+        {found.leaderboard && <RankCard board={found.leaderboard} />}
         <Big testid="tries-to-green" label="Tries to green" both={found.tries_to_green ?? NONE} show={tries} of="merged tasks" help={TRIES} />
         <Card withBorder padding="lg" data-testid="first-try-green">
           <Tooltip label="The share of merged tasks whose first run's pull request merged with no fix run." multiline maw={360}>
@@ -75,6 +77,7 @@ export function KeyNumbers({ from, to }: { from: string; to: string }) {
         <Big testid="cost-per-pr" label="Cost per pull request" both={found.cost_per_pull_request} show={money} of="pull requests" />
         <Big testid="cost-per-goal" label="Cost per goal" both={found.cost_per_goal} show={money} of="goals" />
       </SimpleGrid>
+      {found.leaderboard && <BoardChart board={found.leaderboard} />}
       <Text size="sm" c="dimmed" mb="lg" data-testid="key-numbers-note">
         {found.tasks} tasks finished in this time, {found.merged} merged. {usd(Number(found.total_usd))} spent: {usd(Number(found.review_loop_usd))} in
         review and fix runs, {usd(Number(found.planning_usd ?? 0))} on planning, and {usd(Number(found.wasted_usd))} on tasks that did not merge. Deploys' smoke

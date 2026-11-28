@@ -59,6 +59,28 @@ export interface Performance {
   // What the goals' planning tasks cost: in the total and in each goal's cost, and not among the tasks.
   planning_usd?: string;
   hours: number;
+  // Where the dollar-hours figure stands among measured harness and model pairs.
+  leaderboard?: Board;
+}
+
+// One place on the board: a measured harness and model, or Muxxy, with its dollar-hours per successful task.
+export interface BoardRow {
+  rank: number;
+  harness: string;
+  model: string;
+  value: number;
+  muxxy: boolean;
+}
+
+// The measured pairs with Muxxy among them, cheapest first. rank is null when Muxxy has no figure to place.
+export interface Board {
+  metric: string;
+  rank: number | null;
+  of: number;
+  multiple_of_best: number | null;
+  // How many tasks Muxxy's figure is over.
+  tasks: number;
+  rows: BoardRow[];
 }
 
 // What each goal's model cost is made of, from GET /v1/costs/goals, most expensive goal first.

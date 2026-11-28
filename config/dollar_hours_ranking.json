@@ -1,0 +1,66 @@
+{
+  "metric": "dollar-hours per successful task",
+  "direction": "lower is better",
+  "ranking": [
+    {
+      "harness": "cursor",
+      "model": "composer-2.5-fast",
+      "dollar_hours_per_successful_task": 0.1596
+    },
+    {
+      "harness": "cursor",
+      "model": "gpt-5.6-terra-medium-fast",
+      "dollar_hours_per_successful_task": 0.615
+    },
+    {
+      "harness": "pi",
+      "model": "claude-opus-5-5",
+      "dollar_hours_per_successful_task": 1.8849
+    },
+    {
+      "harness": "pi",
+      "model": "claude-opus-5-5",
+      "dollar_hours_per_successful_task": 2.055
+    },
+    {
+      "harness": "cursor",
+      "model": "gemini-3.8-flash-medium",
+      "dollar_hours_per_successful_task": 2.3138
+    },
+    {
+      "harness": "cursor",
+      "model": "kimi-k3-high",
+      "dollar_hours_per_successful_task": 2.4448
+    },
+    {
+      "harness": "cursor",
+      "model": "cursor-grok-4.6-high-fast",
+      "dollar_hours_per_successful_task": 3.8209
+    },
+    {
+      "harness": "pi",
+      "model": "claude-opus-5",
+      "dollar_hours_per_successful_task": 12.2656
+    },
+    {
+      "harness": "cursor",
+      "model": "cursor-grok-4.6-high-fast",
+      "dollar_hours_per_successful_task": 12.747
+    },
+    {
+      "harness": "claude",
+      "model": "claude-opus-5",
+      "dollar_hours_per_successful_task": 24.509
+    },
+    {
+      "harness": "claude",
+      "model": "claude-opus-5",
+      "dollar_hours_per_successful_task": 128.6591
+    },
+    {
+      "harness": "claude",
+      "model": "claude-opus-5",
+      "dollar_hours_per_successful_task": 596.8214
+    }
+  ]
+}

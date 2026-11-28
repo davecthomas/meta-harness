@@ -4709,7 +4709,15 @@ an average for the tasks whose last run finished in the range
 successfully completed task, the tries to green, the cost per task, per pull
 request and per goal, and the share of merged tasks that were green on the
 first try. A try is a task's own run or a fix run, counted until it merged; a
-review run checks the work and is not one. Under the numbers, Goal Cost Composition (`GET /v1/costs/goals`) shows as a
+review run checks the work and is not one. Beside the dollar-hours figure is
+Muxxy's rank on it among measured harness and model pairs
+(`tasks/leaderboard.py`, `config/dollar_hours_ranking.json`, which holds a
+harness, a model and that one figure for each, and nothing else). The whole
+board opens from the rank, with Muxxy in its place, and under the numbers
+every figure is drawn on one logarithmic scale, since they run from under 1 to
+several hundred. Both say that the measured pairs ran one fixed set of tasks
+and Muxxy's figure is over its own tasks in the time in view: a place among
+them, never a like-for-like result. Under that, Goal Cost Composition (`GET /v1/costs/goals`) shows as a
 ring the share of a goal's cost that goes to each stage, averaged over the
 completed goals in the time in view, each goal counting the same, with each
 stage's share and average dollars beside it. The stages are in the order the
