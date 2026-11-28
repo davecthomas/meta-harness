@@ -1,7 +1,7 @@
 """The run's summary for its pull request, with a fallback written from what the harness recorded.
 
 A run is told to end its last message with its summary for the pull request between a SUMMARY_OPEN line and a
-SUMMARY_CLOSE line (prompts/repo-task-v2.txt, prompts/fix-v2.txt). Only the marked part is the summary, so the
+SUMMARY_CLOSE line (prompts/repo-task-v3.txt, prompts/fix-v2.txt). Only the marked part is the summary, so the
 narration a model writes around it ("Both checks pass.", "Here is the summary:") never reaches the pull
 request. Some runs leave none: the last turn called a tool (a turn limit, an operator's stop), its text marks
 no summary, or the marked part says next to nothing ("Done.") or is only narration ("Both checks pass and the

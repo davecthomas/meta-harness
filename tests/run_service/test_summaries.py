@@ -316,7 +316,7 @@ def test_the_fallback_is_one_publish_keeps_under_its_own_heading():
     assert pr_summary.section(summary, [], source) == pr_summary.Section(pr_summary.FALLBACK_HEADING, summary, False)
 
 
-@pytest.mark.parametrize("name", ["repo-task-v2", "fix-v2"])
+@pytest.mark.parametrize("name", ["repo-task-v3", "fix-v2"])
 def test_the_prompts_ask_for_the_summary_between_the_markers(name):
     text = (activities.PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
     assert f"a line `{summaries.SUMMARY_OPEN}` and a line `{summaries.SUMMARY_CLOSE}`" in text

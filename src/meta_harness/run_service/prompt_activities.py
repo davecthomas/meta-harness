@@ -1,6 +1,6 @@
 """record_prompt: the filled-in prompt each run of a task is given, recorded before the run starts.
 
-The first run's prompt is repo-task-v2 (or the caller's own text) filled in by
+The first run's prompt is repo-task-v3 (or the caller's own text) filled in by
 prepare (plan-v1 for a goal's planning task); a review or fix run's is review-v6 or fix-v2, filled in by
 loop_prompt. Neither result is in an event, so when a run goes wrong an
 operator could not tell a bad prompt (a missing check, a wrong path, an issue
