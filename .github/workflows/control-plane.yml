@@ -85,6 +85,77 @@ jobs:
         # four and a half minutes on one core, and that was the longest check on every pull request.
         run: uv run pytest -q -rs -n auto | tee pytest.out && ! grep "SKIPPED" pytest.out | grep -v "records histories only when asked"
 
+  # What a pull request adds that no test or type check covers, said to its reviewer, and it holds nothing: the
+  # tests' own job says whether they pass. The changed lines no test runs are posted as one comment on the pull
+  # request, which a Muxxy review reads (docs/specs/work-with-repo-ci.md). A type error fails this job only when
+  # the change adds it (deploy/type_ratchet.py): the repo has several hundred from before it was checked.
+  quality:
+    name: what this change adds unchecked
+    needs: scope
+    if: ${{ github.event_name == 'pull_request' && needs.scope.outputs.scope != 'docs' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_USER: mh
+          POSTGRES_PASSWORD: mh
+          POSTGRES_DB: mh
+        ports:
+          - 5444:5432
+        options: >-
+          --health-cmd "pg_isready -U mh -d mh"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      MH_DATABASE_URL: postgresql://mh:mh@127.0.0.1:5444/mh
+      BASE: origin/${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.12.5"
+      - run: uv sync --locked
+      - name: type errors this change adds
+        run: |
+          git worktree add --quiet /tmp/base "$BASE"
+          uvx pyright@1.1.407 /tmp/base/src --pythonpath .venv/bin/python --outputjson > /tmp/base.json || true
+          uvx pyright@1.1.407 src --pythonpath .venv/bin/python --outputjson > /tmp/head.json || true
+          python3 deploy/type_ratchet.py /tmp/base.json /tmp/head.json --strip /tmp/base/ | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: uv run mh migrate
+        if: always()
+      - name: changed lines no test runs
+        if: always()
+        # The tests' own job says whether they pass: here they only say which lines they ran.
+        run: |
+          uv run pytest -q -n auto --cov=src/meta_harness --cov-report=xml:coverage.xml || true
+          uvx diff-cover@11.0.5 coverage.xml --compare-branch "$BASE" --format markdown:coverage.md
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+      - name: say them on the pull request
+        if: always()
+        # One comment, kept up to date, found by its first line. A pull request from a fork has a token that
+        # cannot comment: the report is still in the job's summary.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          { echo "<!-- changed-lines-coverage -->"; cat coverage.md; } > comment.md
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate -q '.[] | select(.body | startswith("<!-- changed-lines-coverage -->")) | .id' | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md -q .html_url
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@comment.md -q .html_url
+          fi
+
   console:
     name: console web app
     needs: scope

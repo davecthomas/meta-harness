@@ -707,6 +707,26 @@ async def branch_head(repo: str, branch: str) -> str:
     return str(commit.get("sha", ""))
 
 
+# The first line of the one comment a repo's checks keep on a pull request to say which of its changed lines no
+# test runs (this repo's is written by .github/workflows/control-plane.yml).
+COVERAGE_MARK = "<!-- changed-lines-coverage -->"
+COVERAGE_CHARS = 3000
+
+
+async def uncovered_lines(repo: str, number: int) -> str:
+    """What the repo's checks say of the pull request's changed lines that no test runs: the text of their
+    marked comment, without the mark, cut to COVERAGE_CHARS. "" when there is none."""
+    comments = await _github(
+        repo, READ_PULL_REQUEST, "GET", f"/repos/{repo}/issues/{number}/comments", params={"per_page": 100}
+    )
+    for comment in reversed(comments or []):
+        body = str(comment.get("body") or "")
+        if body.startswith(COVERAGE_MARK):
+            text = body.removeprefix(COVERAGE_MARK).strip()
+            return text if len(text) <= COVERAGE_CHARS else text[:COVERAGE_CHARS] + "\n(cut short)"
+    return ""
+
+
 async def security_alerts(repo: str) -> list[dict[str, Any]]:
     """The repo's open security alerts on the code host, code scanning and dependency alike, each as its kind
     (code_scanning or dependency), number, severity (critical, high, medium or low), a one-line summary, where

@@ -1126,6 +1126,16 @@ and history; `/config?kind=repos` opens it. The sidebar's entry counts the
 repos whose base fails. One marker, "Base passes" or "Base fails N checks",
 reads the same health beside a goal's repos and under New goal's repo picker.
 
+A review is told which changed lines no test runs. This repo's checks report
+them on each pull request as one comment, found by its first line
+(`.github/workflows/control-plane.yml`, the job "what this change adds
+unchecked", with `diff-cover`). A review's prompt carries that report as data
+(`code_host.uncovered_lines`): a changed line that decides something, with no
+test running it, is worth a finding. A repo that posts no such comment
+changes nothing. The same job fails a pull request for a type error only when
+the change adds it (`deploy/type_ratchet.py`), since the repo has several
+hundred from before it was checked.
+
 A repo's open security alerts become issues (`planner/security_alerts.py`).
 Once a day (`MH_SECURITY_ALERTS_SECONDS`) the planner reads each registered
 repo's open code scanning and dependency alerts from the code host. Each new

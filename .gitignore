@@ -24,3 +24,8 @@ gha-creds-*.json
 # The deployment's settings: which project, bucket and site production is. The repo is public, so they stay
 # local (CI reads them from the MH_ENVIRONMENT secret). deploy/environment.example.json shows the shape.
 deploy/environment.json
+
+# Coverage data a local run leaves.
+.coverage
+.coverage.*
+coverage.xml
