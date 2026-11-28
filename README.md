@@ -20,18 +20,20 @@ request, and fix runs address its findings before the pull request merges. You
 step in only where a decision needs a person, such as approving a plan.
 
 Meta-Harness is self-hosting. Problems found while running it become goals in
-its own console, and it writes and merges most of the changes to this
+its own console, Muxxy, and it writes and merges most of the changes to this
 repository itself.
 
 ---
 
 ## Contents
 
+- [Five key innovations](#five-key-innovations)
 - [First principles](#first-principles)
 - [What makes it different](#what-makes-it-different)
 - [Features](#features)
 - [How a goal becomes merged code](#how-a-goal-becomes-merged-code)
 - [Architecture](#architecture)
+- [Domain model](#domain-model)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
 - [Command line](#command-line)
@@ -41,6 +43,37 @@ repository itself.
 - [Versioning and releases](#versioning-and-releases)
 - [Contributing](#contributing)
 - [License](#license)
+
+## Five key innovations
+
+1. **A second model attacks each plan before you pay for it.** A planning agent reads your
+   repos and drafts the work as sized, dependency-ordered tasks. A second
+   model looks for what the plan gets wrong, and the planner fixes what
+   it finds. You approve one plan, with its open questions and its spend
+   limit beside the button.
+2. **A merge test in place of a perfect review.** A pull request merges when
+   main is better with it than without it. A reviewer on a different model
+   from the author sorts each finding: one that fails that test goes to a fix
+   run, and the planner files any other as a follow-up for a later pull request. Work
+   reaches main in small layers, and no pull request waits on taste.
+3. **A stopped task is a defect with an owner.** The Task Manager looks at
+   every open task each minute and takes the first step that applies, in a
+   fixed order: merge it, clear what blocks the merge, fix the findings, try a
+   stronger model, then ask a person. It tries a step a bounded number of
+   times, never passes a spend limit, and every ask comes with the button
+   that does it.
+4. **It works with each repo's own checks and deploy.** Meta-Harness reads what a
+   repo's CI already says before it runs anything itself. A base branch the
+   repo's checks passed is not checked again, and a failing one gets one task
+   that fixes it. A fix run starts from the failed job's own log. A task ends
+   when the repo's deploy says the change is live, and a repo's security
+   alerts become issues. Each repo's health has a page.
+5. **Its measure is dollar-hours per successful task.** Every attempt's
+   dollars times its hours, failures included, over how far the tasks
+   succeeded. A router sends each task to the model and harness that fit its
+   difficulty, tiers are configuration you edit, and the Performance page
+   ranks the result against measured harness and model pairs on that one
+   figure.
 
 ## First principles
 
@@ -62,8 +95,14 @@ resolves those waits itself where it can.
 7. **It shows every decision,** with what it saw and the reason for it.
 8. **You can always decide differently.** The recommended action is one of
    several you can take.
-9. **A spend limit you set is never passed.** Reaching one stops the work and
-   asks you. A goal with no budget set has no limit.
+9. **A spend limit is never passed, and nothing spends without one.** Reaching
+   one stops the work and asks you. A goal given no budget gets the task
+   policy's cap.
+10. **What it shows you helps you decide,** and costs as little reading as the
+    decision allows.
+11. **It works with each repo's own checks and deploy.** It reads what they
+    already say before it runs anything itself, and repeats nothing they will
+    run. A change is done when the repo's own process says it is live.
 
 The **Goal Planner** and the **Task Manager** talk to you. The Goal Planner
 decides what work a goal needs. The Task Manager gets each task merged, and acts
@@ -166,40 +205,66 @@ path through these steps as it happens, with the time and money each one took.
 
 ## Architecture
 
+The components, and which calls which. An arrow reads "calls" or "writes to".
+
 ```mermaid
 flowchart TB
-    subgraph Operators
-        UI[Operator console]
-        CLI[mh CLI]
+    subgraph people["People"]
+        Console["Operator console<br/>React, Mantine"]
+        CLI["mh command line"]
     end
-    subgraph Control plane
-        Edge[Edge: sign-in and routing]
-        Planner[Planner and supervisor]
-        Tasks[Task service]
-        Sched[Scheduler]
-        Run[Run service on Temporal]
-        Events[(Event service)]
-        PG[(PostgreSQL)]
-    end
-    subgraph Sandbox["Per-run sandbox"]
-        Harness[Harness server running pi]
-    end
-    Gateway[HTTP Gateway]
-    Models[Model providers]
-    Host[GitHub]
-    Tracker[GitHub Issues or Jira]
 
-    UI --> Edge
+    subgraph control["Control plane"]
+        Edge["Edge<br/>sign-in, roles, routing"]
+        Planner["Planner<br/>goals, plans, sweeps,<br/>needs, repo health"]
+        Supervisor["Supervisor<br/>the Task Manager"]
+        Tasks["Task service<br/>Task API, performance"]
+        Scheduler["Scheduler<br/>admission, kill switch"]
+        Run["Run service<br/>RunTask workflow"]
+        Config["Configuration<br/>versioned"]
+        Events[("Event service<br/>ordered record")]
+        DB[("PostgreSQL")]
+        Temporal["Temporal"]
+    end
+
+    subgraph sandbox["Per-run sandbox, no code-host credentials"]
+        Harness["Harness server<br/>pi coding agent"]
+        Egress["Egress proxy<br/>allowlist"]
+    end
+
+    Gateway["HTTP Gateway<br/>keys, model pin, spend limit"]
+    Models["Model providers"]
+
+    subgraph repo["Each repo"]
+        Host["Code host<br/>branches, pull requests"]
+        CI["Its own checks and deploy"]
+        Alerts["Security alerts"]
+    end
+    Tracker["Tracker<br/>GitHub Issues, Jira,<br/>or its own"]
+
+    Console --> Edge
     CLI --> Edge
-    Edge --> Planner & Tasks & Sched & Events
+    Edge --> Planner & Tasks & Scheduler & Config & Events
+    Planner --> Tasks
     Planner --> Tracker
-    Sched --> Run
+    Planner --> Alerts
+    Supervisor --> Tasks
+    Supervisor --> Run
+    Scheduler --> Tasks
+    Scheduler --> Run
+    Run --> Temporal
     Run --> Harness
-    Harness --> Gateway --> Models
     Run --> Host
-    Planner & Tasks & Sched & Run --> Events
-    Planner & Tasks & Sched & Events --- PG
+    Run --> CI
+    Harness --> Egress --> Gateway --> Models
+    CI --> Host
+    Planner & Supervisor & Tasks & Scheduler & Run --> Events
+    Planner & Supervisor & Tasks & Scheduler & Config & Events --- DB
 ```
+
+Only the run service writes to a code host, and nothing in a sandbox holds a
+credential for one. A sandbox reaches the HTTP Gateway through the egress
+proxy and nothing else.
 
 | Component | Role | Code |
 |---|---|---|
@@ -216,6 +281,100 @@ flowchart TB
 
 The HTTP Gateway (from `ai-api-unified-http`) is the only model endpoint a sandbox can reach. It holds the
 provider keys. It also pins each run's model and enforces each run's spend limit.
+
+## Domain model
+
+The records Meta-Harness keeps:
+
+```mermaid
+classDiagram
+    direction LR
+    class Goal {
+        statement
+        repos
+        autonomy
+        budget
+        status
+    }
+    class Plan {
+        version
+        drafts
+        gaps
+        source
+    }
+    class PlanReview {
+        reviewer
+        state
+        findings
+    }
+    class Issue {
+        ref
+        paths
+        acceptance checks
+        depends on
+    }
+    class Task {
+        status
+        tier
+        spend limit
+        standing
+    }
+    class Run {
+        kind
+        candidate
+        dollars
+        hours
+    }
+    class PullRequest {
+        head
+        checks
+        merge commit
+    }
+    class Review {
+        round
+        verdict
+    }
+    class Finding {
+        blocking
+        status
+    }
+    class Repo {
+        standing checks
+        deploy check
+    }
+    class BaseCheck {
+        commit
+        command
+        passed
+    }
+    class Event {
+        position
+        type
+        payload
+    }
+
+    Goal "1" *-- "many" Plan : versions
+    Plan "1" o-- "0..1" PlanReview : attacked by
+    Goal "1" o-- "many" Issue : holds
+    Issue "1" --> "0..1" Task : becomes
+    Task "1" *-- "many" Run : task, review and fix runs
+    Task "1" --> "0..1" PullRequest : opens
+    PullRequest "1" *-- "many" Review : rounds
+    Review "1" *-- "many" Finding
+    Finding --> Run : a blocking one starts a fix run
+    Goal "many" --> "many" Repo : works in
+    Task "many" --> "1" Repo : changes
+    Repo "1" *-- "many" BaseCheck : one for a commit and check
+    BaseCheck --> Task : a failing one gets a fix task
+    Task ..> Event : every step
+    Run ..> Event
+    Goal ..> Event
+```
+
+A goal's plan becomes issues when you approve it. Each issue becomes a task,
+runs try a task, and a run that finishes opens a pull request. Each of its
+reviews' findings starts a fix run or goes to a later pull request. Every step is
+an event, which is what the console, the costs and the Task Manager read.
 
 ## Quick start
 
