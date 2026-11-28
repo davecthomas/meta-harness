@@ -1126,6 +1126,15 @@ and history; `/config?kind=repos` opens it. The sidebar's entry counts the
 repos whose base fails. One marker, "Base passes" or "Base fails N checks",
 reads the same health beside a goal's repos and under New goal's repo picker.
 
+A repo's open security alerts become issues (`planner/security_alerts.py`).
+Once a day (`MH_SECURITY_ALERTS_SECONDS`) the planner reads each registered
+repo's open code scanning and dependency alerts from the code host. Each new
+one of high or critical severity is filed as an issue in the repo's tracker,
+with no goal's label, ten at most for a repo in one read, and recorded as
+`security_alert_filed`. An alert is filed once (`planner.security_alert`), and
+nothing is fixed unasked. A repo whose alerts cannot be read is logged with
+what to grant the GitHub App. The Repos page counts the alerts filed.
+
 A failing base gets one fix task (`planner/base_fix.py`). The sweep of the
 goal whose task ran the failing check notes it (`planner.base_fix`, one row
 for a repo) and starts the task: an issue of that goal, kept in Muxxy, with

@@ -169,6 +169,8 @@ def gather(tasks: Any, events: Any, usual: dict[str, dict[str, int]]) -> list[di
     rerun = reruns(events, lambda task_id: str((task_of(task_id) or {}).get("repo") or ""))
     live = last_live(events, task_of)
     titles = {g["id"]: g.get("title") or (g.get("statement") or "")[:80] for g in goals}
+    with db.connect(autocommit=True) as conn:
+        alerts = dict(conn.execute("SELECT repo, count(*) FROM planner.security_alert GROUP BY repo").fetchall())
     found = []
     for key in sorted({*work, *registered}):
         entry = registered.get(key)
@@ -190,6 +192,8 @@ def gather(tasks: Any, events: Any, usual: dict[str, dict[str, int]]) -> list[di
                 "tasks": (work.get(key) or {}).get("tasks", 0),
                 "pulls": (work.get(key) or {}).get("pulls", 0),
                 "live": live.get(key),
+                # The security alerts filed as issues for it (planner/security_alerts.py).
+                "alerts": alerts.get(key, 0),
             }
         )
     return sorted(found, key=lambda r: (not (r["base"] and r["base"]["state"] == "failing"), r["repo"].lower()))

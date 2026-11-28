@@ -24,6 +24,8 @@ export interface RepoHealth {
   tasks: number;
   pulls: number;
   live: { task_id: string; title: string; at: string; deploy_check: string } | null;
+  // How many of its security alerts were filed as issues.
+  alerts?: number;
 }
 
 export interface ReposHealth {
