@@ -110,6 +110,11 @@ function RepoBox({ repo }: { repo: RepoHealth }) {
           <Group gap="lg" wrap="wrap" pt="xs" style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
             <Text size="xs" c="dimmed">Standing checks: <Text span ff="monospace" inherit>{repo.default_checks.join(", ") || "none"}</Text></Text>
             <Text size="xs" c="dimmed">Deploy check: {repo.deploy_check || "none"}</Text>
+            {!!repo.alerts && (
+              <Anchor href={`https://github.com/${repo.repo}/security`} target="_blank" rel="noreferrer" size="xs">
+                {count(repo.alerts, "security alert", "security alerts")} filed as issues
+              </Anchor>
+            )}
           </Group>
         )}
       </Stack>
@@ -154,7 +159,8 @@ export function ReposPage() {
     <>
       <PageHeader
         title="Repos"
-        actions={<Button component={Link} to="/repos?tab=settings&add=1" variant="default" leftSection={<IconPlus size={16} />}>Add repository</Button>}
+        // The Settings tab has its own Add repository, beside the list it adds to: one button, not two.
+        actions={tab === "health" ? <Button component={Link} to="/repos?tab=settings&add=1" variant="default" leftSection={<IconPlus size={16} />}>Add repository</Button> : undefined}
       />
       <Tabs value={tab} onChange={(value) => setParams(value === "settings" ? { tab: "settings" } : {})} keepMounted={false}>
         <Tabs.List mb="lg">

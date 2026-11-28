@@ -2270,5 +2270,36 @@
       "ref"
     ],
     "additionalProperties": true
+  },
+  "security_alert_filed v1": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "code_scanning",
+          "dependency"
+        ]
+      },
+      "number": {
+        "type": "integer"
+      },
+      "severity": {
+        "type": "string"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "repo",
+      "kind",
+      "number",
+      "ref"
+    ],
+    "additionalProperties": true
   }
 }

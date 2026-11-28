@@ -60,6 +60,9 @@ READ_CHECKS = {"checks": "read", "statuses": "read"}
 REVIEW = {"pull_requests": "write"}
 READ_PULL_REQUEST = {"pull_requests": "read"}
 READ_ACTIONS = {"actions": "read"}
+# A repo's code scanning alerts, and its dependency (Dependabot) alerts.
+READ_CODE_ALERTS = {"security_events": "read"}
+READ_DEPENDENCY_ALERTS = {"vulnerability_alerts": "read"}
 # Re-running a pull request's failed GitHub Actions jobs, once, before a fix run is sent for them.
 WRITE_ACTIONS = {"actions": "write"}
 # A check run's GitHub Actions workflow run, from its details link.
@@ -702,6 +705,54 @@ async def branch_head(repo: str, branch: str) -> str:
     """The branch's newest commit."""
     commit = await _github(repo, READ_CODE, "GET", f"/repos/{repo}/commits/{branch}") or {}
     return str(commit.get("sha", ""))
+
+
+async def security_alerts(repo: str) -> list[dict[str, Any]]:
+    """The repo's open security alerts on the code host, code scanning and dependency alike, each as its kind
+    (code_scanning or dependency), number, severity (critical, high, medium or low), a one-line summary, where
+    it is, the version that fixes it when one does, and its address. A repo with a kind of alert turned off
+    has none of that kind.
+
+    Raises:
+        CodeHostError: The alerts could not be read, as when the app lacks the permission.
+    """
+    found: list[dict[str, Any]] = []
+    for kind, permissions, path in (
+        ("code_scanning", READ_CODE_ALERTS, f"/repos/{repo}/code-scanning/alerts"),
+        ("dependency", READ_DEPENDENCY_ALERTS, f"/repos/{repo}/dependabot/alerts"),
+    ):
+        try:
+            alerts = await _github(repo, permissions, "GET", path, params={"state": "open", "per_page": 100})
+        except CodeHostError as err:
+            # Turned off for the repo, or never set up: the code host answers 404, and there is nothing to file.
+            if err.status == 404:
+                continue
+            raise
+        for alert in alerts or []:
+            if kind == "code_scanning":
+                rule = alert.get("rule") or {}
+                place = ((alert.get("most_recent_instance") or {}).get("location") or {}).get("path") or ""
+                severity = str(rule.get("security_severity_level") or rule.get("severity") or "")
+                summary, fix = str(rule.get("description") or rule.get("id") or "a code scanning alert"), ""
+            else:
+                advisory = alert.get("security_advisory") or {}
+                vulnerable = alert.get("security_vulnerability") or {}
+                place = str(((alert.get("dependency") or {}).get("package") or {}).get("name") or "")
+                severity = str(advisory.get("severity") or vulnerable.get("severity") or "")
+                summary = str(advisory.get("summary") or "a dependency alert")
+                fix = str((vulnerable.get("first_patched_version") or {}).get("identifier") or "")
+            found.append(
+                {
+                    "kind": kind,
+                    "number": int(alert.get("number") or 0),
+                    "severity": severity.lower(),
+                    "summary": summary,
+                    "where": place,
+                    "fix": fix,
+                    "url": str(alert.get("html_url") or ""),
+                }
+            )
+    return found
 
 
 async def base_head(repo: str) -> str:

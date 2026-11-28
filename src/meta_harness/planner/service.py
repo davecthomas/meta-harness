@@ -79,6 +79,7 @@ from meta_harness.planner import (
     narratives,
     plan_review,
     reach,
+    security_alerts,
     repo_health,
     needs,
     next_steps,
@@ -559,6 +560,7 @@ def create_app(
 
     async def sweep_forever() -> None:
         followed_up_at: float | None = None
+        alerts_read_at: float | None = None
         while True:
             await each(await listed(swept_goals, "sweep"), sweep_one, "sweep")
             # A goal no sweep covers, a met one most of all, keeps its issues' labels and its canceled tasks'
@@ -572,6 +574,14 @@ def create_app(
                     await follow_up_goalless(tasks, events, host)
                 except Exception as err:  # noqa: BLE001 - logged; the next follow-up tries again
                     log.error("planner: the follow-up of tasks of no goal failed: %s: %s", type(err).__name__, err)
+
+            # Each registered repo's open security alerts become issues, once a day.
+            if alerts_read_at is None or now - alerts_read_at >= security_alerts.EVERY_SECONDS:
+                alerts_read_at = now
+                try:
+                    await security_alerts.file_all(tracker, events)
+                except Exception as err:  # noqa: BLE001 - logged; the next day's read tries again
+                    log.error("planner: the read of security alerts failed: %s: %s", type(err).__name__, err)
 
             # A planning goal's ended planning task becomes its plan.
             async def collect(goal: dict) -> None:

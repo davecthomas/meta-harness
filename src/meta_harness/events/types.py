@@ -628,6 +628,22 @@ REGISTRY: list[EventType] = [
             ["ref", "parent", "from_ref", "goal_id", "action"],
         ),
     ),
+    # The planner filed an issue for an open security alert on a repo's code host (planner/security_alerts.py):
+    # a code scanning or dependency alert of high or critical severity. ref is the issue.
+    EventType(
+        "security_alert_filed",
+        1,
+        _object(
+            {
+                "repo": {"type": "string"},
+                "kind": {"type": "string", "enum": ["code_scanning", "dependency"]},
+                "number": {"type": "integer"},
+                "severity": {"type": "string"},
+                "ref": {"type": "string"},
+            },
+            ["repo", "kind", "number", "ref"],
+        ),
+    ),
     # The planner started the one task that fixes a repo's failing base branch (planner/base_fix.py). ref is
     # the task's issue. The actor is the operator who pressed Fix it, or the planner for a goal that does not ask.
     EventType(
