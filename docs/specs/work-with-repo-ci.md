@@ -27,7 +27,7 @@ A first principle joins the ten in `docs/technical-design.md`, the charter each 
 - **A task says when its change is live.** It already waits for the repo's deploy where that is a check on the
   merge. The operator should read "Live" where the page now says "Merge commit's checks passed".
 - **The operator sees each repo's health.** Whether its base passes, how long its checks take, and which fail
-  by chance.
+  by chance: on one page, and beside the repo wherever an operator picks or watches it.
 - **The repo's findings are not lost.** A security alert or a check that keeps failing by chance becomes work
   or a count, never a log line nobody reads.
 
@@ -73,11 +73,65 @@ It reads no job log, no branch rule and no security alert, and it counts no reru
   and "The deploy failed" when it does not, in place of "Merge commit's checks passed". A repo with none named
   reads as now.
 
-### Show the path
+### Repos in the console
 
-- **A repo has a health line.** On a goal's page, for each of its repos: whether the base passes on the code
-  host and in the sandbox, how long its checks usually take together, and which checks were rerun for failing
-  by chance in the last week, with how often.
+A repo's state has no home today. Its settings are under Admin, and nothing says whether its base passes. A
+mockup of what follows: https://claude.ai/artifact/66KSCSEhznifi7A8abdhN9 (private to the owner until shared).
+
+**A Repos page, in the sidebar after Tasks.** Goals stay the unit of work, and this page starts none: it is
+read, with links out. One box for each repo that has an open goal or an entry in Configuration, Repositories,
+a failing base first:
+
+```
+Repos                                              3 repos with an open goal or settings here
+
++-----------------------------------------------------------------------------------------+
+| stagwell-machine/console-api   [! Base fails 3 checks]              [Open the fix task]  |
+|                                                                                         |
+| BASE                    CHECKS                 WORK HERE              LIVE              |
+| Passes on GitHub        Usually 8m 20s         1 goal                 No deploy check   |
+| Fails in the sandbox    integration tests:     2 tasks running,       named             |
+| npm test                rerun 4 of 22 this     1 fixing the base      Name one in       |
+| at 4c1e9d0, found by    week                   1 open pull request    settings          |
+| "Add CSV export"                                                                        |
++-----------------------------------------------------------------------------------------+
+| davecthomas/meta-harness       [ok Base passes]                         Edit settings   |
+|                                                                                         |
+| BASE                    CHECKS                 WORK HERE              LIVE              |
+| Passes on GitHub        Usually 5m 15s         1 goal                 14 minutes ago    |
+| Not run in the sandbox  No check rerun         3 tasks running        Plan page: an     |
+| at 49dcecd              this week              2 open pull requests   answer field...   |
+|                                                                                         |
+| Standing checks: uv run ruff check .     Deploy check: deploy to Google Cloud           |
++-----------------------------------------------------------------------------------------+
+```
+
+- **Base.** Whether the base's newest checked commit passes on the code host and in the sandbox. For a failing
+  one: the failing checks, the commit, and the goal whose task found it. The box's button opens the fix task
+  when one is open, and is Fix it when Muxxy asked the goal's operator.
+- **Checks.** How long the repo's checks usually take together, and each check rerun for failing by chance in
+  the last seven days, with how many of its runs.
+- **Work here.** Its open goals, running tasks and open pull requests, as counts that link to them.
+- **Live.** For a repo with a deploy check named: the last change that went live and when. For one with none: a
+  link to name one.
+- **Settings.** Its standing checks and deploy check, read only, with a link to Configuration, Repositories,
+  which edits and versions them.
+- A repo no goal is working in says so, and that a task's next start checks its base.
+- The sidebar's entry counts the repos whose base fails.
+
+**One health marker, wherever an operator picks or watches a repo.** "Base passes" or "Base fails 3 checks", with a
+mark that differs in shape, and a link to the Repos page:
+
+- New goal: beside each repo offered. A goal can start on a failing base; the marker says so before it does.
+- A goal's page: beside each of its repos.
+- A task's page: the last step of its path reads "Live" for a repo with a deploy check named.
+
+**What this page is not.** It shows no code and lists no pull requests: the code host does both, and every row
+links there. A repo has no page of its own, no history and no action but the fix for its base.
+
+**Served by** `GET /v1/repos/health`, from what the run service and the planner already record: the kept base
+checks, `base_check_ran`, `remedy_tried`, `merge_checks` and the goals' links. Reading the page asks the code
+host nothing.
 
 ### Findings become work
 
@@ -120,7 +174,8 @@ In order. Each is one pull request unless it says otherwise.
 4. **A task's run tests what it changed.** After 3, since the run then leans on CI and CI's output must reach
    the fix.
 5. **A task says when its change is live**, with `deploy_check`.
-6. **A repo has a health line**, with the count of checks rerun for failing by chance.
+6. **Repos in the console**: `GET /v1/repos/health`, the Repos page and the health marker. The
+   endpoint and the page go in first, then the marker on New goal and a goal's page.
 7. **This repo's CI**: the required check and admin rule, the pinned Temporal CLI, `pytest` across cores and
    shared images. The rules and the pin go in first, then the speed.
 8. **Audits and scans in this repo's CI**, then **a security alert becomes an issue**, which reads them.
