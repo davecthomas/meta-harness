@@ -44,7 +44,7 @@ def of_goal(goal: dict, tasks: list[dict], most: int = ALL) -> list[dict]:
     if goal["status"] == "planning":
         from meta_harness.planner import plan_review
 
-        plan = plan_review.marked(goal["id"], plan)
+        plan = plan_review.marked(goal["id"], plan, goal)
     if "budget_state" not in goal:
         goal = budget.view(dict(goal), goal.get("budget_policy") or "block")
     from meta_harness.planner import base_fix
