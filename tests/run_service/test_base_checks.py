@@ -46,6 +46,11 @@ def base(conn, monkeypatch):
         return 0, "ok"
 
     monkeypatch.setattr(repos, "get", lambda name: repos.Repo(name, "github", CHECKS) if name == repo else None)
+
+    async def no_host_checks(name, commit):
+        return []
+
+    monkeypatch.setattr(code_host, "check_runs", no_host_checks)
     monkeypatch.setattr(code_host, "base_head", base_head)
     monkeypatch.setattr(base_checks, "_clone_at", clone_at)
     monkeypatch.setattr(activities, "_lease", lease)
@@ -186,3 +191,50 @@ async def test_a_base_with_nothing_failing_changes_no_prompt_and_runs_nothing(en
 
     assert script.runs[0].prompt == "task" and script.base_ran == []
     assert script.prompts[0].base_failing == []
+
+
+def _host(monkeypatch, runs: list[code_host.CheckRun], pending: int = 0) -> None:
+    async def check_runs(name, commit):
+        return runs
+
+    async def pending_suites(name, commit):
+        return pending
+
+    monkeypatch.setattr(code_host, "check_runs", check_runs)
+    monkeypatch.setattr(code_host, "pending_suites", pending_suites)
+
+
+def _check(conclusion: str | None, status: str = "completed") -> code_host.CheckRun:
+    return code_host.CheckRun(name="tests", status=status, conclusion=conclusion, summary="")
+
+
+async def test_a_base_the_repos_own_checks_passed_is_kept_as_passing_and_the_sandbox_runs_nothing(base, monkeypatch):
+    repo, ran, emitted, _ = base
+    _host(monkeypatch, [_check("success"), _check("skipped")])
+
+    known = await ActivityEnvironment().run(base_checks.known_base_checks, _asked(repo, "t-1"))
+
+    assert (known.failing, known.missing) == ([], False), "the workflow starts no base check run"
+    assert ran == []
+    assert [(p["command"], p["passed"], p["source"]) for _, p, _ in emitted] == [(c, True, "code_host") for c in CHECKS]
+    again = await ActivityEnvironment().run(base_checks.known_base_checks, _asked(repo, "t-2"))
+    assert again.missing is False and len(emitted) == 2, "kept: the host is not asked to say it twice"
+
+
+@pytest.mark.parametrize(
+    "runs,pending",
+    [
+        ([_check("success"), _check("failure")], 0),
+        ([_check("success"), _check(None, "in_progress")], 0),
+        ([_check("success")], 1),
+        ([], 0),
+    ],
+    ids=["one failed", "one still running", "a workflow still queued", "none ran"],
+)
+async def test_the_code_hosts_word_is_taken_only_for_a_base_every_check_passed(base, monkeypatch, runs, pending):
+    repo, ran, emitted, _ = base
+    _host(monkeypatch, runs, pending)
+
+    known = await ActivityEnvironment().run(base_checks.known_base_checks, _asked(repo, "t-1"))
+
+    assert known.missing is True and emitted == [], "the sandbox runs the checks, as it did"

@@ -1081,6 +1081,10 @@ untouched base once for each commit, in the sandbox a task runs in:
   service keeps for the base's newest commit (`run_service.base_check`, one row for a repo,
   commit and command). The run's prompt lists each check that fails there with
   the end of its output, and says to leave them alone.
+- When nothing is kept and the code host's own checks all passed that
+  commit, the standing checks are kept as passing and the sandbox runs
+  nothing (`host_passed`). The host's word is taken only for a passing base:
+  one it failed, or is still checking, is run in the sandbox.
 - Checks with no result run beside the first run (`run_base_checks`), in a
   sandbox of their own, so no task waits for them. Two tasks that start
   together do not both run them: one holds each check, and the other reads the
