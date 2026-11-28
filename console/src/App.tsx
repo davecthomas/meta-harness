@@ -61,7 +61,8 @@ const NEW_GOAL = (
 
 function navItems(admin: boolean, section: "Operate" | "Admin" | "Help") {
   const items = FEATURES.flatMap((f) => f.nav).filter((n) => (admin || !n.admin) && n.section === section);
-  return [...items.filter((n) => !n.history), ...items.filter((n) => n.history)];
+  const placed = items.filter((n) => !n.last);
+  return [...placed.filter((n) => !n.history), ...placed.filter((n) => n.history), ...items.filter((n) => n.last)];
 }
 
 function isActive(path: string, to: string): boolean {
@@ -219,6 +220,7 @@ export function App() {
                   to={item.to}
                   label={item.label}
                   leftSection={<item.icon size={18} stroke={1.6} />}
+                  rightSection={item.badge && who && !refused ? <item.badge /> : undefined}
                   active={isActive(location.pathname, item.to)}
                   variant="light"
                   style={{ borderRadius: "var(--mantine-radius-md)" }}

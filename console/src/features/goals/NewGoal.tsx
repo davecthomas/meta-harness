@@ -37,6 +37,7 @@ import { api, refLabel, type IssueSource, type LabelIssue, type Tracker, type Us
 import { GoalTrackerFields } from "../trackers/GoalTrackerFields";
 import { LabelField } from "./LabelField";
 import { RepoPick } from "./RepoPick";
+import { FailingBases } from "../repos/RepoMarker";
 import { AiTyping, aiWriting } from "../../components/AiWriting";
 import { useSimilarGoals } from "./SimilarGoals";
 import { ImproveGoal } from "./ImproveGoal";
@@ -511,6 +512,7 @@ export function NewGoal() {
             <Panel n={2} question="Where is the work?" answer={whereAnswer} open={open(2)} done={done(2)} onEdit={() => go(2)}>
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
                 <RepoPick offered={reposRead ? repos : null} value={chosen} onChange={setChosen} label="Repositories" required />
+                <FailingBases repos={chosen} />
                 <Stack gap="xs">
                   <GoalTrackerFields
                     trackers={source === "issues" ? realTrackers : trackers}

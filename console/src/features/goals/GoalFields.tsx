@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { AUTONOMY, AutonomyPicker, autonomyOf } from "./autonomy";
-import { Badge, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
+import { Badge, Group, NumberInput, Stack, Text, TextInput, Textarea } from "@mantine/core";
 import { api, goalTitle, type Goal } from "../../api";
 import { goalSource } from "../trackers/refs";
 import { InlineEdit, InlineSwitch } from "./InlineEdit";
 import { LabelField } from "./LabelField";
 import { RepoPick } from "./RepoPick";
+import { RepoMarker } from "../repos/RepoMarker";
 import { PARALLEL_HELP, parallelLabel } from "./parallel";
 
 // Each field an operator set on a goal, edited where the goal page shows it. A save sends only that field.
@@ -129,7 +130,16 @@ export function ReposEdit({ goal, readOnly, save }: FieldProps) {
       label="repos"
       readOnly={readOnly}
       value={goal.repos}
-      display={<Stack gap={2}>{goal.repos.map((r) => <Text ff="monospace" size="sm" key={r}>{r}</Text>)}</Stack>}
+      display={
+        <Stack gap={2}>
+          {goal.repos.map((r) => (
+            <Group key={r} gap={6} wrap="wrap">
+              <Text ff="monospace" size="sm">{r}</Text>
+              <RepoMarker repo={r} />
+            </Group>
+          ))}
+        </Stack>
+      }
       same={(a, b) => [...a].sort().join("\n") === [...b].sort().join("\n")}
       check={(v) => (v.length ? null : "Pick at least one repo.")}
       save={(v) => save({ repos: v })}

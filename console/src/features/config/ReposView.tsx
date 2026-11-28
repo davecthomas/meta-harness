@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Anchor, Badge, Button, Group, Modal, Paper, Select, Stack, Table, Text, Textarea } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { api } from "../../api";
@@ -54,7 +54,9 @@ export function ReposView({ staging: s }: { staging: Staging }) {
   const names = Object.keys(repos);
   const [available, setAvailable] = useState<Available | null>(null);
   const [unlisted, setUnlisted] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  // The Repos page's Add repository opens this dialog on arrival (`?add=1`).
+  const [params] = useSearchParams();
+  const [adding, setAdding] = useState(params.get("add") === "1");
   useEffect(() => {
     if (s.readOnly) return;
     api.reposAvailable().then(setAvailable, (err) => setUnlisted(err instanceof Error ? err.message : String(err)));

@@ -13,5 +13,8 @@ export interface Feature {
     icon: ComponentType<{ size?: number; stroke?: number }>;
     admin?: boolean;
     history?: ComponentType;
+    // last: placed after the entries that open in the pane. badge: a count shown at the entry's right.
+    last?: boolean;
+    badge?: ComponentType;
   }[];
 }

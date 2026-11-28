@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, test, vi } from "vitest";
 import { ReposView } from "./ReposView";
 import { theme } from "../../theme";
@@ -24,7 +25,7 @@ function show(repos: Record<string, unknown>, original = repos) {
   );
   render(
     <MantineProvider theme={theme}>
-      <ReposView staging={{ document: { repos }, original: { repos: original }, stage: (path, value) => staged.push([path as string[], value]), reasons: () => [] }} />
+      <MemoryRouter><ReposView staging={{ document: { repos }, original: { repos: original }, stage: (path, value) => staged.push([path as string[], value]), reasons: () => [] }} /></MemoryRouter>
     </MantineProvider>,
   );
   return staged;
@@ -71,7 +72,7 @@ test("a repo's deploy check is picked from the checks on its default branch, and
   const repos = { "o/r": { default_checks: [], deploy_check: "old deploy" } };
   render(
     <MantineProvider theme={theme}>
-      <ReposView staging={{ document: { repos }, original: { repos }, stage: (path, value) => staged.push([path as string[], value]), reasons: () => [] }} />
+      <MemoryRouter><ReposView staging={{ document: { repos }, original: { repos }, stage: (path, value) => staged.push([path as string[], value]), reasons: () => [] }} /></MemoryRouter>
     </MantineProvider>,
   );
   const row = within(screen.getByTestId("repo-o/r"));
@@ -92,7 +93,7 @@ test("when a repo's checks cannot be read, the deploy check says why and takes a
   const repos = { "o/r": { default_checks: [] } };
   render(
     <MantineProvider theme={theme}>
-      <ReposView staging={{ document: { repos }, original: { repos }, stage: () => undefined, reasons: () => [] }} />
+      <MemoryRouter><ReposView staging={{ document: { repos }, original: { repos }, stage: () => undefined, reasons: () => [] }} /></MemoryRouter>
     </MantineProvider>,
   );
   expect((await screen.findByTestId("deploy-check-unread-o/r")).textContent).toContain("Type the check's name instead");

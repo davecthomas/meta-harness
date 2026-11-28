@@ -79,6 +79,7 @@ from meta_harness.planner import (
     narratives,
     plan_review,
     reach,
+    repo_health,
     needs,
     next_steps,
     overview,
@@ -1914,6 +1915,7 @@ def create_app(
     plan_api.register(app, operator, load, events, tracker, tasks, activate, issues_to_plan, plan_again, sizer=size)
     budget_api.register(app, operator, load, change_with, events, tasks)
     base_fix.register(app, operator, load, tracker, events)
+    repo_health.register(app, operator, tasks, events, usual_seconds)
     github_api.register(app, operator, events, github_transport)
     reach.register(app, operator, github_transport)
     acts_as_api.register(app, operator, load, events, github_transport)

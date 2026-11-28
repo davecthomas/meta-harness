@@ -11,6 +11,7 @@ import { overviewApi } from "./features/overview/api";
 import { settingsApi } from "./features/settings/api";
 import { githubApi } from "./features/github/api";
 import { tasksApi } from "./features/tasks/api";
+import { reposApi } from "./features/repos/api";
 
 export { ApiError, call, query };
 // Each feature's own types, so `import { ... } from "../api"` finds them too.
@@ -23,6 +24,7 @@ export * from "./features/performance/api";
 export * from "./features/settings/api";
 export * from "./features/github/api";
 export * from "./features/tasks/api";
+export * from "./features/repos/api";
 
 export interface Goal {
   id: string;
@@ -283,6 +285,7 @@ export const api = {
   ...settingsApi,
   ...githubApi,
   ...tasksApi,
+  ...reposApi,
 };
 
 // One server-sent-event stream for many tasks: the event service's tail, filtered by task ids.
