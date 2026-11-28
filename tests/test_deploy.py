@@ -74,6 +74,8 @@ def test_the_deploy_workflow_waits_for_every_check_main_runs():
         jobs |= set(re.findall(r"^    name: (.+)$", (WORKFLOWS / workflow).read_text(), re.M))
     # Not checks of the code: they only say which checks a pull request needs.
     jobs -= {"which checks this change needs", "which control plane checks this change needs"}
+    # A pull request's own report of what it adds unchecked: it never runs on main, so no deploy waits for it.
+    jobs -= {"what this change adds unchecked"}
     # The sandbox check's parts: "sandbox runs this repo's checks" stands for them all, and is the one waited for.
     jobs = {job for job in jobs if not job.startswith("sandbox check part ")}
     deploy = (WORKFLOWS / "deploy.yml").read_text()
