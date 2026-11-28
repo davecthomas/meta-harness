@@ -1,0 +1,25 @@
+# Updates as pull requests, once a week, grouped so a week is one pull request for each kind: the Python lock
+# file, the console's and the harness server's packages, and the actions the workflows pin by commit.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directories: ["/console", "/images/harness-pi"]
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

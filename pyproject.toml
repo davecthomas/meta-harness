@@ -7,17 +7,17 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "ai-api-unified[openai]",
     "click==8.1.8",
-    "fastapi==0.128.0",
+    "fastapi==0.165.0",
     "httpx==0.28.1",
     "jinja2==3.1.6",
     "jsonschema==4.23.0",
     "psycopg-pool==3.2.6",
     "psycopg[binary]==3.2.9",
-    "pyjwt[crypto]==2.10.1",
+    "pyjwt[crypto]==2.15.0",
     "python-multipart==0.0.31",
     # Pinned itself, not left to FastAPI: 0.39.0 to 0.49.0 answer a crafted Range header with unbounded work
     # (CVE-2025-62727), and the edge serves files to anyone.
-    "starlette==0.50.0",
+    "starlette==1.10.0",
     "temporalio==1.34.0",
     "uvicorn==0.34.3",
 ]
@@ -27,10 +27,10 @@ mh = "meta_harness.cli:main"
 
 [dependency-groups]
 dev = [
-    "pytest==8.3.5",
-    "pytest-asyncio==0.26.0",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.5.0",
     "pytest-timeout==2.3.1",
-    "pytest-xdist>=3.8.0",
+    "pytest-xdist==3.8.0",
     "ruff==0.11.13",
 ]
 
