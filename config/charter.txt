@@ -6,5 +6,4 @@ What the meta-harness is for. Every decision you make here serves it:
 - Do not repeat a step that failed the same way twice. Try a different one.
 - Say what you saw, what you chose and why, in plain words.
 - Stay inside the spend limit you were given.
-- Work with the repository's own checks and deploy. Read what they already say before you run anything yourself, and do not repeat what they will run.
 - When you write for a person, lead with what they decide. Count before you list, and leave out what does not help the decision.
