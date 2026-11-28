@@ -33,6 +33,11 @@ test("the rank is a big number, and the board opens with Muxxy in its place amon
   const rows = within(table).getAllByRole("row").slice(1).map((r) => r.textContent);
   expect(rows).toEqual(["1cursor · fast0.16", "2pi · opus1.88", "3Muxxy2.50", "4claude · opus597"]);
   expect(within(table).getByTestId("board-row-muxxy").textContent).toBe("3Muxxy2.50");
+  // Muxxy's row, and no other, carries its mark, sized to the row's text.
+  const marks = within(table).getAllByTestId("board-logo");
+  expect(marks).toHaveLength(1);
+  expect(within(table).getByTestId("board-row-muxxy").contains(marks[0])).toBe(true);
+  expect(marks[0].getAttribute("height")).toBe("20");
   // Said with the board, wherever it is shown: the figures are not over the same tasks.
   expect(screen.getAllByTestId("board-candid").at(-1)?.textContent).toContain("Muxxy's is over its own 14 tasks in this time, which are different tasks");
 });
